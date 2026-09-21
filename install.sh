@@ -9,7 +9,7 @@ INSTALL_DIR="/Applications"
 usage() {
     echo "Usage: install.sh [--version VERSION] [--user]"
     echo ""
-    echo "  --version VERSION  Install a release such as v1.0.0 (default: latest)"
+    echo "  --version VERSION  Install a release such as v0.1.0 (default: latest)"
     echo "  --user             Install into ~/Applications without administrator access"
 }
 

@@ -53,16 +53,28 @@ After connecting, the menu bar shows the configured used or remaining percentage
 
 ## Install
 
-Download `LLMits.dmg` from the [latest release](https://github.com/aryan1306/LLMits/releases/latest), open it, and drag LLMits into Applications.
-
-Alternatively, use the installer script. Downloading it first lets you inspect it before running:
+Install the latest release with one command:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh -o /tmp/install-llmits.sh
-bash /tmp/install-llmits.sh
+curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh | bash
 ```
 
-Use `--user` to install into `~/Applications` without administrator access, or `--version 1.0.0` to install a specific release.
+To inspect the script before running it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh -o install-llmits.sh
+less install-llmits.sh
+bash install-llmits.sh
+```
+
+Pass options through `bash` to install into `~/Applications` without administrator access or select a specific release:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh | bash -s -- --user
+curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh | bash -s -- --version 0.1.0
+```
+
+You can also download `LLMits.dmg` from the [latest release](https://github.com/aryan1306/LLMits/releases/latest), open it, and drag LLMits into Applications.
 
 Release builds are currently ad-hoc signed. On first launch, macOS may require you to right-click LLMits and choose **Open**. A future Developer ID-signed and notarized release will remove this extra confirmation.
 
