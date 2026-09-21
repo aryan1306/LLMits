@@ -7,9 +7,9 @@ final class ProviderEndpointTests: XCTestCase {
         let data = Data(#"""
         {
           "plan":"max",
-          "five_hour":{"utilization":0.42,"resets_at":"2026-09-22T01:00:00Z"},
-          "seven_day":{"utilization":0.21,"resets_at":"2026-09-28T01:00:00Z"},
-          "seven_day_fable":{"utilization":0.12,"resets_at":"2026-09-28T01:00:00Z"},
+          "five_hour":{"utilization":42,"resets_at":"2026-09-22T01:00:00Z"},
+          "seven_day":{"utilization":21,"resets_at":"2026-09-28T01:00:00Z"},
+          "seven_day_fable":{"utilization":12,"resets_at":"2026-09-28T01:00:00Z"},
           "new_server_field":{"anything":true}
         }
         """#.utf8)
@@ -18,6 +18,7 @@ final class ProviderEndpointTests: XCTestCase {
         XCTAssertEqual(snapshot.plan, "max")
         XCTAssertEqual(snapshot.windows.map(\.id), ["five-hour", "weekly", "fable-weekly"])
         XCTAssertEqual(snapshot.windows.last?.label, "Fable weekly")
+        XCTAssertEqual(snapshot.windows.first?.utilization, 0.42)
     }
 
     func testCodexUsageParserMapsPrimarySecondaryAndAdditionalLimits() throws {
@@ -74,9 +75,78 @@ final class ProviderEndpointTests: XCTestCase {
         XCTAssertEqual(ProviderEndpoints.Codex.token.absoluteString, "https://auth.openai.com/oauth/token")
         XCTAssertEqual(ProviderEndpoints.Codex.usage.absoluteString, "https://chatgpt.com/backend-api/wham/usage")
     }
+
+    func testCodexDeviceAuthorizationRequestsAndPollsJSONEndpoints() async throws {
+        let transport = RecordingTransport(responses: [
+            HTTPResponse(data: Data(#"{"device_auth_id":"device-1","user_code":"ABCD-EFGH","interval":"5"}"#.utf8), statusCode: 200),
+            HTTPResponse(data: Data(#"{"authorization_code":"code-1","code_challenge":"unused","code_verifier":"verifier-1"}"#.utf8), statusCode: 200),
+        ])
+        let client = CodexDeviceAuthorizationClient(transport: transport)
+        let authorization = try await client.requestCode(now: Date(timeIntervalSince1970: 100))
+        let result = try await client.poll(authorization)
+
+        XCTAssertEqual(authorization.deviceCode, "device-1")
+        XCTAssertEqual(authorization.userCode, "ABCD-EFGH")
+        XCTAssertEqual(authorization.pollingInterval, 5)
+        XCTAssertEqual(result, .authorized(DeviceAuthorizationGrant(authorizationCode: "code-1", codeVerifier: "verifier-1")))
+        let requests = await transport.recordedRequests()
+        XCTAssertEqual(requests.map(\.url), [ProviderEndpoints.Codex.deviceCode, ProviderEndpoints.Codex.deviceToken])
+        XCTAssertEqual(requests.map(\.valueForContentType), ["application/json", "application/json"])
+        XCTAssertEqual(try jsonBody(requests[0])["client_id"] as? String, ProviderEndpoints.Codex.clientID)
+        XCTAssertEqual(try jsonBody(requests[1])["device_auth_id"] as? String, "device-1")
+    }
+
+    func testRefreshingProviderPreservesRotatedFieldsThenFetchesUsage() async throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let credentials = InMemoryCredentialStore()
+        await credentials.save(
+            OAuthCredential(accessToken: "old", refreshToken: "keep-refresh", expiresAt: now, scopes: ["scope"], accountID: "account-1"),
+            for: .codex
+        )
+        let transport = RecordingTransport(responses: [
+            HTTPResponse(data: Data(#"{"access_token":"new","expires_in":3600}"#.utf8), statusCode: 200),
+            HTTPResponse(data: Data(#"{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":25}}}"#.utf8), statusCode: 200),
+        ])
+        let provider = RefreshingUsageProvider(id: .codex, credentials: credentials, transport: transport, now: { now })
+
+        let snapshot = try await provider.fetchUsage()
+        let saved = await credentials.credential(for: .codex)
+
+        XCTAssertEqual(snapshot.windows.first?.utilization, 0.25)
+        XCTAssertEqual(saved?.accessToken, "new")
+        XCTAssertEqual(saved?.refreshToken, "keep-refresh")
+        XCTAssertEqual(saved?.accountID, "account-1")
+        let requests = await transport.recordedRequests()
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(requests[0].value(forHTTPHeaderField: "Content-Type"), "application/x-www-form-urlencoded")
+        XCTAssertEqual(requests[1].value(forHTTPHeaderField: "ChatGPT-Account-Id"), "account-1")
+    }
 }
 
 private struct StubTransport: HTTPTransporting {
     let response: HTTPResponse
     func send(_ request: URLRequest) async throws -> HTTPResponse { response }
+}
+
+private actor RecordingTransport: HTTPTransporting {
+    private var responses: [HTTPResponse]
+    private var requests: [URLRequest] = []
+
+    init(responses: [HTTPResponse]) { self.responses = responses }
+
+    func send(_ request: URLRequest) async throws -> HTTPResponse {
+        requests.append(request)
+        guard !responses.isEmpty else { throw ProviderError.invalidResponse }
+        return responses.removeFirst()
+    }
+
+    func recordedRequests() -> [URLRequest] { requests }
+}
+
+private extension URLRequest {
+    var valueForContentType: String? { value(forHTTPHeaderField: "Content-Type") }
+}
+
+private func jsonBody(_ request: URLRequest) throws -> [String: Any] {
+    try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
 }

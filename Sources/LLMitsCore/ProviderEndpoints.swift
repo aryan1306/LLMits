@@ -54,6 +54,8 @@ public struct URLSessionTransport: HTTPTransporting {
 }
 
 public struct OAuthTokenClient: Sendable {
+    public enum Encoding: Sendable { case form, json }
+
     private let transport: any HTTPTransporting
 
     public init(transport: any HTTPTransporting = URLSessionTransport()) {
@@ -66,12 +68,16 @@ public struct OAuthTokenClient: Sendable {
         code: String,
         verifier: String,
         redirectURI: String,
-        now: Date = Date()
+        now: Date = Date(),
+        encoding: Encoding = .form,
+        additionalFields: [String: String] = [:]
     ) async throws -> OAuthCredential {
-        try await token(endpoint: endpoint, fields: [
+        var fields = [
             "grant_type": "authorization_code", "client_id": clientID, "code": code,
             "code_verifier": verifier, "redirect_uri": redirectURI,
-        ], now: now)
+        ]
+        fields.merge(additionalFields) { _, new in new }
+        return try await token(endpoint: endpoint, fields: fields, now: now, encoding: encoding)
     }
 
     public func refresh(
@@ -79,18 +85,25 @@ public struct OAuthTokenClient: Sendable {
         clientID: String,
         refreshToken: String,
         scopes: [String] = [],
-        now: Date = Date()
+        now: Date = Date(),
+        encoding: Encoding = .form
     ) async throws -> OAuthCredential {
         var fields = ["grant_type": "refresh_token", "client_id": clientID, "refresh_token": refreshToken]
         if !scopes.isEmpty { fields["scope"] = scopes.joined(separator: " ") }
-        return try await token(endpoint: endpoint, fields: fields, now: now)
+        return try await token(endpoint: endpoint, fields: fields, now: now, encoding: encoding)
     }
 
-    private func token(endpoint: URL, fields: [String: String], now: Date) async throws -> OAuthCredential {
+    private func token(endpoint: URL, fields: [String: String], now: Date, encoding: Encoding) async throws -> OAuthCredential {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = fields.formEncoded.data(using: .utf8)
+        switch encoding {
+        case .form:
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.httpBody = fields.formEncoded.data(using: .utf8)
+        case .json:
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: fields)
+        }
         let response = try await transport.send(request)
         guard (200..<300).contains(response.statusCode) else {
             if response.statusCode == 401 || response.statusCode == 400 { throw ProviderError.revokedSession }
@@ -98,15 +111,96 @@ public struct OAuthTokenClient: Sendable {
             throw ProviderError.invalidResponse
         }
         let payload = try JSONDecoder().decode(TokenPayload.self, from: response.data)
+        let identityToken = payload.idToken ?? payload.accessToken
         return OAuthCredential(
             accessToken: payload.accessToken,
             refreshToken: payload.refreshToken,
             expiresAt: payload.expiresIn.map { now.addingTimeInterval($0) },
             tokenType: payload.tokenType ?? "Bearer",
             scopes: payload.scope?.split(separator: " ").map(String.init) ?? [],
-            idToken: payload.idToken
+            idToken: payload.idToken,
+            accountID: Self.jwtClaim("chatgpt_account_id", token: identityToken)
         )
     }
+
+    private static func jwtClaim(_ name: String, token: String) -> String? {
+        let parts = token.split(separator: ".")
+        guard parts.count > 1 else { return nil }
+        var encoded = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
+        guard let data = Data(base64Encoded: encoded),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if let value = object[name] as? String { return value }
+        return (object["https://api.openai.com/auth"] as? [String: Any])?[name] as? String
+    }
+}
+
+public struct DeviceAuthorizationGrant: Equatable, Sendable {
+    public let authorizationCode: String
+    public let codeVerifier: String
+    public init(authorizationCode: String, codeVerifier: String) {
+        self.authorizationCode = authorizationCode
+        self.codeVerifier = codeVerifier
+    }
+}
+
+public enum DeviceCodePollResponse: Equatable, Sendable {
+    case pending
+    case authorized(DeviceAuthorizationGrant)
+}
+
+public struct CodexDeviceAuthorizationClient: Sendable {
+    private let transport: any HTTPTransporting
+
+    public init(transport: any HTTPTransporting = URLSessionTransport()) { self.transport = transport }
+
+    public func requestCode(now: Date = Date()) async throws -> DeviceAuthorization {
+        let response = try await post(ProviderEndpoints.Codex.deviceCode, body: ["client_id": ProviderEndpoints.Codex.clientID])
+        guard (200..<300).contains(response.statusCode),
+              let payload = try? JSONDecoder().decode(DeviceCodePayload.self, from: response.data) else {
+            throw ProviderError.invalidResponse
+        }
+        return DeviceAuthorization(
+            deviceCode: payload.deviceAuthID,
+            userCode: payload.userCode,
+            verificationURL: ProviderEndpoints.Codex.verification,
+            expiresAt: now.addingTimeInterval(15 * 60),
+            pollingInterval: max(1, TimeInterval(payload.interval) ?? 5)
+        )
+    }
+
+    public func poll(_ authorization: DeviceAuthorization) async throws -> DeviceCodePollResponse {
+        let response = try await post(ProviderEndpoints.Codex.deviceToken, body: [
+            "device_auth_id": authorization.deviceCode, "user_code": authorization.userCode,
+        ])
+        if response.statusCode == 403 || response.statusCode == 404 { return .pending }
+        guard (200..<300).contains(response.statusCode),
+              let payload = try? JSONDecoder().decode(DeviceTokenPayload.self, from: response.data) else {
+            throw ProviderError.invalidResponse
+        }
+        return .authorized(DeviceAuthorizationGrant(authorizationCode: payload.authorizationCode, codeVerifier: payload.codeVerifier))
+    }
+
+    private func post(_ url: URL, body: [String: String]) async throws -> HTTPResponse {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try await transport.send(request)
+    }
+}
+
+private struct DeviceCodePayload: Decodable {
+    let deviceAuthID: String
+    let userCode: String
+    let interval: String
+    enum CodingKeys: String, CodingKey { case deviceAuthID = "device_auth_id", userCode = "user_code", interval }
+}
+
+private struct DeviceTokenPayload: Decodable {
+    let authorizationCode: String
+    let codeVerifier: String
+    enum CodingKeys: String, CodingKey { case authorizationCode = "authorization_code", codeVerifier = "code_verifier" }
 }
 
 public struct EndpointUsageProvider: UsageProviding {
@@ -144,6 +238,54 @@ public struct EndpointUsageProvider: UsageProviding {
     }
 }
 
+/// Refreshes an expiring app-owned token before delegating to the quota endpoint.
+public struct RefreshingUsageProvider: UsageProviding {
+    public let id: ProviderID
+    private let credentials: any CredentialStoring
+    private let tokenClient: OAuthTokenClient
+    private let usageProvider: EndpointUsageProvider
+    private let now: @Sendable () -> Date
+
+    public init(
+        id: ProviderID,
+        credentials: any CredentialStoring,
+        transport: any HTTPTransporting = URLSessionTransport(),
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
+        self.id = id
+        self.credentials = credentials
+        self.tokenClient = OAuthTokenClient(transport: transport)
+        self.usageProvider = EndpointUsageProvider(id: id, credentials: credentials, transport: transport, now: now)
+        self.now = now
+    }
+
+    public func fetchUsage() async throws -> UsageSnapshot {
+        guard let existing = try await credentials.credential(for: id) else { throw ProviderError.notConnected }
+        if let expiry = existing.expiresAt, expiry <= now().addingTimeInterval(60) {
+            guard let refreshToken = existing.refreshToken else { throw ProviderError.revokedSession }
+            let refreshed = try await tokenClient.refresh(
+                endpoint: id == .claude ? ProviderEndpoints.Claude.token : ProviderEndpoints.Codex.token,
+                clientID: id == .claude ? ProviderEndpoints.Claude.clientID : ProviderEndpoints.Codex.clientID,
+                refreshToken: refreshToken,
+                scopes: existing.scopes,
+                now: now(),
+                encoding: id == .claude ? .json : .form
+            )
+            let merged = OAuthCredential(
+                accessToken: refreshed.accessToken,
+                refreshToken: refreshed.refreshToken ?? existing.refreshToken,
+                expiresAt: refreshed.expiresAt,
+                tokenType: refreshed.tokenType,
+                scopes: refreshed.scopes.isEmpty ? existing.scopes : refreshed.scopes,
+                idToken: refreshed.idToken ?? existing.idToken,
+                accountID: refreshed.accountID ?? existing.accountID
+            )
+            try await credentials.save(merged, for: id)
+        }
+        return try await usageProvider.fetchUsage()
+    }
+}
+
 public enum UsageResponseParser {
     public static func parse(_ data: Data, provider: ProviderID, fetchedAt: Date) throws -> UsageSnapshot {
         switch provider {
@@ -159,13 +301,13 @@ public enum UsageResponseParser {
         let known = [("five_hour", "five-hour", "Five-hour quota"), ("seven_day", "weekly", "Weekly quota")]
         for (key, id, label) in known {
             if let value = object[key] as? [String: Any], let utilization = number(value["utilization"]) {
-                windows.append(QuotaWindow(id: id, label: label, utilization: utilization, resetsAt: date(value["resets_at"])))
+                windows.append(QuotaWindow(id: id, label: label, utilization: utilization / 100, resetsAt: date(value["resets_at"])))
             }
         }
         for (key, value) in object where key.hasPrefix("seven_day_") {
             guard let value = value as? [String: Any], let utilization = number(value["utilization"]) else { continue }
             let model = key.dropFirst("seven_day_".count).replacingOccurrences(of: "_", with: " ").capitalized
-            windows.append(QuotaWindow(id: key.replacingOccurrences(of: "seven_day_", with: "") + "-weekly", label: "\(model) weekly", utilization: utilization, resetsAt: date(value["resets_at"])))
+            windows.append(QuotaWindow(id: key.replacingOccurrences(of: "seven_day_", with: "") + "-weekly", label: "\(model) weekly", utilization: utilization / 100, resetsAt: date(value["resets_at"])))
         }
         guard !windows.isEmpty else { throw ProviderError.invalidResponse }
         let plan = (object["plan"] as? String) ?? "Claude"

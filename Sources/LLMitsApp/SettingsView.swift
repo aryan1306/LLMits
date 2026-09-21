@@ -3,26 +3,30 @@ import LLMitsCore
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
+    @State private var claudeCallback = ""
 
     var body: some View {
         Form {
             Section("Connections") {
                 ForEach($model.connections) { $connection in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(connection.provider.displayName).font(.headline)
-                            Picker("Credential source", selection: $connection.source) {
-                                ForEach(CredentialSource.allCases, id: \.self) { source in
-                                    Text(source.displayName).tag(source)
-                                }
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(connection.provider.displayName).font(.headline)
+                                Text(connection.isConnected ? "Connected with LLMits login" : connection.provider == .claude ? "Connect your Claude subscription" : "Connect your ChatGPT subscription")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
-                            .labelsHidden()
-                            Text("Provider authentication is not implemented yet; this enables preview data.")
-                                .font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            Button(connection.isConnected ? "Disconnect" : "Connect") {
+                                if connection.isConnected { model.disconnect(connection.provider) }
+                                else { model.connect(connection.provider) }
+                            }
+                            .disabled(model.authorization != nil && model.authorization?.provider != connection.provider)
                         }
-                        Spacer()
-                        Button(connection.isConnected ? "Disconnect" : "Use preview data") {
-                            model.setConnected(!connection.isConnected, provider: connection.provider)
+
+                        if let authorization = model.authorization, authorization.provider == connection.provider {
+                            authorizationView(authorization)
                         }
                     }
                 }
@@ -46,5 +50,47 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    @ViewBuilder
+    private func authorizationView(_ authorization: AuthorizationPresentation) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            switch authorization.phase {
+            case .starting:
+                Label("Starting secure sign-in…", systemImage: "arrow.triangle.2.circlepath")
+            case .claudeCallback:
+                Text("Finish signing in in your browser, then paste the authorization code or callback URL here.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    TextField("Authorization code", text: $claudeCallback)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Finish") {
+                        model.submitClaudeCallback(claudeCallback)
+                        claudeCallback = ""
+                    }
+                    .disabled(claudeCallback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            case let .codexCode(code):
+                Text("Enter this one-time code in the browser:")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Text(code).font(.system(.title3, design: .monospaced).weight(.semibold)).textSelection(.enabled)
+                    Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(code, forType: .string) }
+                    ProgressView().controlSize(.small)
+                    Text("Waiting for approval…").font(.caption).foregroundStyle(.secondary)
+                }
+            case .exchanging:
+                HStack { ProgressView().controlSize(.small); Text("Completing sign-in…") }
+            case let .failed(message):
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.red)
+                Button("Try Again") { model.connect(authorization.provider) }
+            }
+            Button("Cancel") { model.cancelAuthorization() }
+                .buttonStyle(.link)
+                .font(.caption)
+        }
+        .padding(10)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
     }
 }
