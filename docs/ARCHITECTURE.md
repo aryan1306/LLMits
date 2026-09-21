@@ -6,6 +6,7 @@ The code is split into a provider-neutral `LLMitsCore` library and a macOS `LLMi
 
 - **Domain:** `UsageSnapshot`, `QuotaWindow`, connection, credential-source, and display preferences.
 - **Provider adapters:** `UsageProviding` is the replaceable boundary for Claude and Codex quota fetching.
+- **Provider HTTP:** endpoint constants, form-encoded token exchange/refresh, authenticated quota requests, and tolerant response parsers are isolated in `ProviderEndpoints.swift` because these contracts are unofficial and unstable.
 - **Persistence:** `SnapshotPersisting` stores only the latest non-sensitive snapshot. `CredentialStoring` isolates app-owned tokens in Keychain.
 - **Authorization:** provider-neutral PKCE and device-authorization state live in the core; provider endpoints, client configuration, and token exchange remain injectable adapters.
 - **Presentation:** `AppModel` owns UI state; SwiftUI renders the popover and Settings; AppKit owns the status item and lifecycle.

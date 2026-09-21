@@ -10,12 +10,13 @@
 - OAuth PKCE generation, authorization URL construction, callback parsing, and state validation
 - Codex-compatible device authorization state machine, including slow-down and expiry handling
 - Automatic polling, refresh after wake, stale-card presentation, and reusable bounded backoff policy
+- Concrete Claude/Codex token and quota endpoints, authenticated request adapters, and schema-tolerant quota parsers
 
 ## Next vertical slices
 
 1. Wire Claude's PKCE primitives to verified client configuration, browser launch, token exchange, and the callback-code Settings flow.
 2. Wire the Codex device authorization state machine to verified device/token endpoints and Settings polling UI.
-3. Sanitized provider fixtures, schema-tolerant parsers, token refresh, and revoked-session handling.
+3. Expand sanitized provider fixtures as schemas evolve; schema-tolerant parsers, token refresh requests, and revoked-session HTTP handling are implemented.
 4. Apply server-directed/exponential backoff to live provider refresh failures (scheduler, wake handling, policy, and stale presentation are implemented).
 5. CLI credential discovery and explicit source-switch flows.
 6. Launch at Login, GitHub release checks, diagnostics UI, and update indicator.

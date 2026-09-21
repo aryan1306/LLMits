@@ -7,19 +7,25 @@ public struct OAuthCredential: Codable, Equatable, Sendable {
     public let expiresAt: Date?
     public let tokenType: String
     public let scopes: [String]
+    public let idToken: String?
+    public let accountID: String?
 
     public init(
         accessToken: String,
         refreshToken: String? = nil,
         expiresAt: Date? = nil,
         tokenType: String = "Bearer",
-        scopes: [String] = []
+        scopes: [String] = [],
+        idToken: String? = nil,
+        accountID: String? = nil
     ) {
         self.accessToken = accessToken
         self.refreshToken = refreshToken
         self.expiresAt = expiresAt
         self.tokenType = tokenType
         self.scopes = scopes
+        self.idToken = idToken
+        self.accountID = accountID
     }
 }
 
