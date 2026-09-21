@@ -9,6 +9,16 @@
 
 LLMits is an open-source macOS menu-bar utility for viewing quota utilization from Claude and ChatGPT subscriptions. It targets macOS 14+ and keeps credentials and usage data local.
 
+## Product preview
+
+<p align="center">
+  <img src="docs/assets/llmits-popover.png" alt="LLMits popover showing Claude and ChatGPT quota usage" width="680">
+</p>
+
+<p align="center">
+  <img src="docs/assets/llmits-menu-bar.png" alt="LLMits Claude and ChatGPT quota percentages in the macOS menu bar" width="268">
+</p>
+
 > [!IMPORTANT]
 > LLMits uses provider OAuth and quota endpoints that are not public, supported APIs. Provider-side changes may temporarily break authentication or usage reporting.
 
