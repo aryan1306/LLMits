@@ -2,6 +2,11 @@
   <img src="docs/assets/llmits-terminal-graffiti.png" alt="LLMits" width="900">
 </p>
 
+<p align="center">
+  <a href="https://github.com/aryan1306/LLMits/actions/workflows/ci.yml"><img src="https://github.com/aryan1306/LLMits/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/aryan1306/LLMits/releases/latest"><img src="https://img.shields.io/github/v/release/aryan1306/LLMits" alt="Latest release"></a>
+</p>
+
 LLMits is an open-source macOS menu-bar utility for viewing quota utilization from Claude and ChatGPT subscriptions. It targets macOS 14+ and keeps credentials and usage data local.
 
 > [!IMPORTANT]
@@ -46,6 +51,21 @@ After connecting, the menu bar shows the configured used or remaining percentage
 > [!NOTE]
 > Running with `swift run` produces an ad-hoc-signed development executable. macOS may ask for Keychain access again after a rebuild because the executable identity changes. Choose **Always Allow** for the current build, or use a consistently signed app bundle for stable Keychain trust.
 
+## Install
+
+Download `LLMits.dmg` from the [latest release](https://github.com/aryan1306/LLMits/releases/latest), open it, and drag LLMits into Applications.
+
+Alternatively, use the installer script. Downloading it first lets you inspect it before running:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh -o /tmp/install-llmits.sh
+bash /tmp/install-llmits.sh
+```
+
+Use `--user` to install into `~/Applications` without administrator access, or `--version 1.0.0` to install a specific release.
+
+Release builds are currently ad-hoc signed. On first launch, macOS may require you to right-click LLMits and choose **Open**. A future Developer ID-signed and notarized release will remove this extra confirmation.
+
 ## How it works
 
 - AppKit owns the status item and transient popover; SwiftUI renders the popover and settings UI.
@@ -69,6 +89,14 @@ Build without launching the app:
 ```sh
 swift build
 ```
+
+Create a universal app and DMG locally:
+
+```sh
+./scripts/build-dmg.sh 0.1.0
+```
+
+Artifacts are written to `dist/`. GitHub Actions runs CI on pushes and pull requests. A manual **Build DMG** workflow run uploads the DMG as a workflow artifact; pushing a tag such as `v0.1.0` also creates a GitHub Release with the DMG and SHA-256 checksum.
 
 The test suite covers authorization primitives, credential storage, provider response parsing, quota calculations, persistence, diagnostics, and refresh policy.
 

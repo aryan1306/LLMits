@@ -1,0 +1,62 @@
+name: Build DMG
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version embedded in the app (for example, 1.0.0)
+        required: true
+        default: 0.1.0
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package universal macOS app
+    runs-on: macos-15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Test
+        run: swift test
+
+      - name: Resolve version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_NAME: ${{ github.ref_name }}
+          MANUAL_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "value=$MANUAL_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${TAG_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build DMG
+        run: ./scripts/build-dmg.sh "${{ steps.version.outputs.value }}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMits-${{ steps.version.outputs.value }}
+          path: |
+            dist/LLMits.dmg
+            dist/LLMits.dmg.sha256
+          if-no-files-found: error
+
+      - name: Publish tagged release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/LLMits.dmg dist/LLMits.dmg.sha256 --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/LLMits.dmg dist/LLMits.dmg.sha256 --generate-notes --title "LLMits $GITHUB_REF_NAME"
+          fi

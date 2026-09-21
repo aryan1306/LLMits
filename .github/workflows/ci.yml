@@ -2,14 +2,23 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   test:
+    name: Build and test
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build -c release
+
       - name: Test
         run: swift test
-      - name: Build release
-        run: swift build -c release
