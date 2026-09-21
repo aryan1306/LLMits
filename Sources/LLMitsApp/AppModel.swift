@@ -61,12 +61,15 @@ final class AppModel: ObservableObject {
     }
 
     var statusTitle: String {
-        let items = connectedSnapshots.compactMap { snapshot -> String? in
-            guard let window = snapshot.statusWindow else { return nil }
-            let mark = snapshot.provider == .claude ? "C" : "O"
-            return "\(mark) \(window.percentage(for: preferences.displayMode))%"
-        }
+        let items = statusItems.map { "\($0.provider.displayName) \($0.percentage)%" }
         return items.isEmpty ? "LLMits" : items.joined(separator: "  ")
+    }
+
+    var statusItems: [(provider: ProviderID, percentage: Int)] {
+        connectedSnapshots.compactMap { snapshot in
+            guard let window = snapshot.statusWindow else { return nil }
+            return (snapshot.provider, window.percentage(for: preferences.displayMode))
+        }
     }
 
     var statusAccessibilityLabel: String {

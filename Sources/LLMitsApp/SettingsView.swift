@@ -61,13 +61,16 @@ struct SettingsView: View {
             case .claudeCallback:
                 Text("Finish signing in in your browser, then paste the authorization code or callback URL here.")
                     .font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    TextField("Authorization code", text: $claudeCallback)
+                HStack(alignment: .center, spacing: 8) {
+                    TextField("Paste code or callback URL", text: $claudeCallback)
                         .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                        .layoutPriority(1)
                     Button("Finish") {
                         model.submitClaudeCallback(claudeCallback)
                         claudeCallback = ""
                     }
+                    .fixedSize()
                     .disabled(claudeCallback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             case let .codexCode(code):

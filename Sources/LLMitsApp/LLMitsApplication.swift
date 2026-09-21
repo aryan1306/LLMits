@@ -91,8 +91,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func updateStatusTitle() {
-        statusItem?.button?.title = model.statusTitle
-        statusItem?.button?.setAccessibilityLabel("LLMits, \(model.statusAccessibilityLabel)")
+        guard let button = statusItem?.button else { return }
+        button.attributedTitle = makeStatusTitle()
+        button.setAccessibilityLabel("LLMits, \(model.statusAccessibilityLabel)")
+    }
+
+    private func makeStatusTitle() -> NSAttributedString {
+        guard !model.statusItems.isEmpty else {
+            return NSAttributedString(string: "LLMits")
+        }
+
+        let title = NSMutableAttributedString()
+        for (index, item) in model.statusItems.enumerated() {
+            if index > 0 { title.append(NSAttributedString(string: "   ")) }
+            if let image = providerImage(item.provider) {
+                let size: CGFloat = item.provider == .claude ? 17 : 14
+                let attachment = NSTextAttachment()
+                attachment.image = image
+                attachment.bounds = NSRect(x: 0, y: item.provider == .claude ? -3 : -2, width: size, height: size)
+                title.append(NSAttributedString(attachment: attachment))
+            }
+            title.append(NSAttributedString(string: " \(item.percentage)%"))
+        }
+        return title
+    }
+
+    private func providerImage(_ provider: ProviderID) -> NSImage? {
+        let name = provider == .claude ? "claude" : "chatgpt"
+        guard let url = Bundle.module.url(forResource: name, withExtension: "svg"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        return image
     }
 
     @objc private func togglePopover() {

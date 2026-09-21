@@ -9,6 +9,7 @@ public enum ProviderEndpoints {
         public static let authorization = URL(string: "https://claude.ai/oauth/authorize")!
         public static let token = URL(string: "https://platform.claude.com/v1/oauth/token")!
         public static let usage = URL(string: "https://api.anthropic.com/api/oauth/usage")!
+        public static let profile = URL(string: "https://api.anthropic.com/api/oauth/profile")!
         public static let redirectURI = "https://platform.claude.com/oauth/code/callback"
     }
 
@@ -234,7 +235,23 @@ public struct EndpointUsageProvider: UsageProviding {
             if response.statusCode == 429 { throw ProviderError.rateLimited(retryAfter: response.retryAfter) }
             throw ProviderError.invalidResponse
         }
-        return try UsageResponseParser.parse(response.data, provider: id, fetchedAt: now())
+        let snapshot = try UsageResponseParser.parse(response.data, provider: id, fetchedAt: now())
+        guard id == .claude else { return snapshot }
+
+        var profileRequest = URLRequest(url: ProviderEndpoints.Claude.profile)
+        profileRequest.setValue("Bearer \(credential.accessToken)", forHTTPHeaderField: "Authorization")
+        profileRequest.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        guard let profileResponse = try? await transport.send(profileRequest),
+              (200..<300).contains(profileResponse.statusCode),
+              let plan = try? UsageResponseParser.parseClaudePlan(profileResponse.data) else {
+            return snapshot
+        }
+        return UsageSnapshot(
+            provider: snapshot.provider,
+            plan: plan,
+            windows: snapshot.windows,
+            fetchedAt: snapshot.fetchedAt
+        )
     }
 }
 
@@ -314,6 +331,25 @@ public enum UsageResponseParser {
         return UsageSnapshot(provider: .claude, plan: plan, windows: windows, fetchedAt: fetchedAt)
     }
 
+    public static func parseClaudePlan(_ data: Data) throws -> String {
+        let profile = try JSONDecoder().decode(ClaudeProfilePayload.self, from: data)
+        let organizationType = profile.organization?.organizationType
+        switch organizationType {
+        case "claude_max":
+            guard let tier = profile.organization?.rateLimitTier,
+                  let multiplier = tier.range(of: #"max_(\d+)x"#, options: .regularExpression)
+                    .map({ String(tier[$0]).dropFirst(4).dropLast() }) else { return "Max" }
+            return "Max \(multiplier)×"
+        case "claude_pro": return "Pro"
+        case "claude_team": return "Team"
+        case "claude_enterprise": return "Enterprise"
+        default:
+            if profile.account?.hasClaudeMax == true { return "Max" }
+            if profile.account?.hasClaudePro == true { return "Pro" }
+            return "Claude"
+        }
+    }
+
     private static func parseCodex(_ data: Data, fetchedAt: Date) throws -> UsageSnapshot {
         let payload = try JSONDecoder().decode(CodexUsagePayload.self, from: data)
         var windows = payload.rateLimit?.windows(prefix: nil) ?? []
@@ -328,6 +364,31 @@ public enum UsageResponseParser {
     private static func date(_ value: Any?) -> Date? {
         guard let value = value as? String else { return nil }
         return ISO8601DateFormatter().date(from: value)
+    }
+}
+
+private struct ClaudeProfilePayload: Decodable {
+    let account: ClaudeProfileAccount?
+    let organization: ClaudeProfileOrganization?
+}
+
+private struct ClaudeProfileAccount: Decodable {
+    let hasClaudeMax: Bool?
+    let hasClaudePro: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case hasClaudeMax = "has_claude_max"
+        case hasClaudePro = "has_claude_pro"
+    }
+}
+
+private struct ClaudeProfileOrganization: Decodable {
+    let organizationType: String?
+    let rateLimitTier: String?
+
+    enum CodingKeys: String, CodingKey {
+        case organizationType = "organization_type"
+        case rateLimitTier = "rate_limit_tier"
     }
 }
 

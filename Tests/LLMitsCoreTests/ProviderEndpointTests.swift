@@ -21,6 +21,30 @@ final class ProviderEndpointTests: XCTestCase {
         XCTAssertEqual(snapshot.windows.first?.utilization, 0.42)
     }
 
+    func testClaudeProfileParserMapsSubscriptionAndRateLimitTier() throws {
+        let maxData = Data(#"{"organization":{"organization_type":"claude_max","rate_limit_tier":"default_claude_max_20x"}}"#.utf8)
+        let proData = Data(#"{"organization":{"organization_type":"claude_pro","rate_limit_tier":"default_claude_pro"}}"#.utf8)
+
+        XCTAssertEqual(try UsageResponseParser.parseClaudePlan(maxData), "Max 20×")
+        XCTAssertEqual(try UsageResponseParser.parseClaudePlan(proData), "Pro")
+    }
+
+    func testClaudeUsageProviderEnrichesSnapshotWithProfilePlan() async throws {
+        let credentials = InMemoryCredentialStore()
+        await credentials.save(OAuthCredential(accessToken: "access"), for: .claude)
+        let transport = RecordingTransport(responses: [
+            HTTPResponse(data: Data(#"{"five_hour":{"utilization":10}}"#.utf8), statusCode: 200),
+            HTTPResponse(data: Data(#"{"organization":{"organization_type":"claude_max","rate_limit_tier":"default_claude_max_5x"}}"#.utf8), statusCode: 200),
+        ])
+        let provider = EndpointUsageProvider(id: .claude, credentials: credentials, transport: transport)
+
+        let snapshot = try await provider.fetchUsage()
+
+        XCTAssertEqual(snapshot.plan, "Max 5×")
+        let requests = await transport.recordedRequests()
+        XCTAssertEqual(requests.map(\.url), [ProviderEndpoints.Claude.usage, ProviderEndpoints.Claude.profile])
+    }
+
     func testCodexUsageParserMapsPrimarySecondaryAndAdditionalLimits() throws {
         let data = Data(#"""
         {
@@ -70,6 +94,7 @@ final class ProviderEndpointTests: XCTestCase {
     func testEndpointConstantsMatchCurrentProviderContracts() {
         XCTAssertEqual(ProviderEndpoints.Claude.token.absoluteString, "https://platform.claude.com/v1/oauth/token")
         XCTAssertEqual(ProviderEndpoints.Claude.usage.absoluteString, "https://api.anthropic.com/api/oauth/usage")
+        XCTAssertEqual(ProviderEndpoints.Claude.profile.absoluteString, "https://api.anthropic.com/api/oauth/profile")
         XCTAssertEqual(ProviderEndpoints.Codex.deviceCode.path, "/api/accounts/deviceauth/usercode")
         XCTAssertEqual(ProviderEndpoints.Codex.deviceToken.path, "/api/accounts/deviceauth/token")
         XCTAssertEqual(ProviderEndpoints.Codex.token.absoluteString, "https://auth.openai.com/oauth/token")

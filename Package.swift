@@ -13,7 +13,11 @@ let package = Package(
             name: "LLMitsCore",
             linkerSettings: [.linkedFramework("Security")]
         ),
-        .executableTarget(name: "LLMitsApp", dependencies: ["LLMitsCore"]),
+        .executableTarget(
+            name: "LLMitsApp",
+            dependencies: ["LLMitsCore"],
+            resources: [.process("Resources")]
+        ),
         .testTarget(name: "LLMitsCoreTests", dependencies: ["LLMitsCore"]),
     ]
 )

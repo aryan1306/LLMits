@@ -1,4 +1,6 @@
-# LLMits
+<p align="center">
+  <img src="docs/assets/llmits-terminal-graffiti.png" alt="LLMits" width="900">
+</p>
 
 LLMits is an open-source macOS menu-bar utility for viewing quota utilization from Claude Code and Codex consumer subscriptions. It targets macOS 14+ and keeps credentials and usage data local.
 

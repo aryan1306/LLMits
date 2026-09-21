@@ -64,9 +64,12 @@ private struct ProviderCard: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(snapshot.provider.displayName).font(.headline)
-                Text(snapshot.plan).font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                ProviderIcon(provider: snapshot.provider)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(snapshot.provider.displayName).font(.headline)
+                    Text(snapshot.plan).font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer()
                 Text("Updated \(QuotaFormatting.freshnessDescription(since: snapshot.fetchedAt, now: context.date))")
                     .font(.caption2).foregroundStyle(.secondary)
@@ -101,6 +104,29 @@ private struct ProviderCard: View {
                     .padding(8)
             }
         }
+        }
+    }
+}
+
+private struct ProviderIcon: View {
+    let provider: ProviderID
+
+    var body: some View {
+        if let url = Bundle.module.url(
+            forResource: provider == .claude ? "claude" : "chatgpt",
+            withExtension: "svg"
+        ), let image = NSImage(contentsOf: url) {
+            Image(nsImage: image)
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(
+                    provider == .claude
+                        ? Color(red: 0.85, green: 0.47, blue: 0.34)
+                        : Color(red: 0.06, green: 0.64, blue: 0.50)
+                )
+                .frame(width: 22, height: 22)
+                .accessibilityHidden(true)
         }
     }
 }
