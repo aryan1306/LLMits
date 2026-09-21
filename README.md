@@ -71,7 +71,7 @@ Pass options through `bash` to install into `~/Applications` without administrat
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh | bash -s -- --user
-curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh | bash -s -- --version 0.1.0
+curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh | bash -s -- --version 1.0.0
 ```
 
 You can also download `LLMits.dmg` from the [latest release](https://github.com/aryan1306/LLMits/releases/latest), open it, and drag LLMits into Applications.
