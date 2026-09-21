@@ -27,6 +27,7 @@ mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources" "$STAGING_DIR
 
 ditto "$BIN_DIR/LLMits" "$APP_PATH/Contents/MacOS/LLMits"
 ditto "$BIN_DIR/LLMits_LLMitsApp.bundle" "$APP_PATH/Contents/Resources/LLMits_LLMitsApp.bundle"
+ditto "$PROJECT_ROOT/packaging/AppIcon.icns" "$APP_PATH/Contents/Resources/AppIcon.icns"
 ditto "$PROJECT_ROOT/packaging/Info.plist" "$APP_PATH/Contents/Info.plist"
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_PATH/Contents/Info.plist"
@@ -38,12 +39,19 @@ codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 ditto "$APP_PATH" "$STAGING_DIR/LLMits.app"
 ln -s /Applications "$STAGING_DIR/Applications"
 
-hdiutil create \
+if ! hdiutil create \
     -volname "LLMits" \
     -srcfolder "$STAGING_DIR" \
     -ov \
     -format UDZO \
-    "$DMG_PATH"
+    "$DMG_PATH"; then
+    echo "Standard DMG creation was busy; retrying with the HFS image builder…"
+    HYBRID_PATH="$DIST_DIR/LLMits-hybrid.dmg"
+    rm -f "$DMG_PATH" "$HYBRID_PATH"
+    hdiutil makehybrid -hfs -hfs-volume-name "LLMits" -o "$HYBRID_PATH" "$STAGING_DIR"
+    hdiutil convert "$HYBRID_PATH" -format UDZO -o "$DMG_PATH"
+    rm -f "$HYBRID_PATH"
+fi
 
 (cd "$DIST_DIR" && shasum -a 256 "LLMits.dmg" > "LLMits.dmg.sha256")
 rm -rf "$STAGING_DIR"
