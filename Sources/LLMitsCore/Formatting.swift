@@ -1,6 +1,16 @@
 import Foundation
 
 public enum QuotaFormatting {
+    public static func freshnessDescription(since date: Date, now: Date = Date()) -> String {
+        let age = max(0, now.timeIntervalSince(date))
+        if age < 60 { return "a few moments ago" }
+
+        let formatter = RelativeDateTimeFormatter()
+        formatter.dateTimeStyle = .numeric
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: date, relativeTo: now)
+    }
+
     public static func countdown(until reset: Date, now: Date = Date()) -> String {
         let seconds = max(0, Int(reset.timeIntervalSince(now)))
         if seconds == 0 { return "Now" }

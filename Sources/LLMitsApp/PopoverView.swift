@@ -29,7 +29,11 @@ struct PopoverView: View {
                 ScrollView {
                     LazyVStack(spacing: 10) {
                         ForEach(model.connectedSnapshots) { snapshot in
-                            ProviderCard(snapshot: snapshot, mode: model.preferences.displayMode)
+                            ProviderCard(
+                                snapshot: snapshot,
+                                mode: model.preferences.displayMode,
+                                staleAfter: TimeInterval(model.preferences.pollingMinutes * 60)
+                            )
                         }
                     }
                 }
@@ -55,14 +59,16 @@ struct PopoverView: View {
 private struct ProviderCard: View {
     let snapshot: UsageSnapshot
     let mode: DisplayMode
+    let staleAfter: TimeInterval
 
     var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 Text(snapshot.provider.displayName).font(.headline)
                 Text(snapshot.plan).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Text("Updated \(snapshot.fetchedAt, style: .relative)")
+                Text("Updated \(QuotaFormatting.freshnessDescription(since: snapshot.fetchedAt, now: context.date))")
                     .font(.caption2).foregroundStyle(.secondary)
             }
             ForEach(snapshot.windows) { window in
@@ -84,5 +90,17 @@ private struct ProviderCard: View {
         }
         .padding(12)
         .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+        .opacity(snapshot.isStale(at: context.date, interval: staleAfter) ? 0.62 : 1)
+        .overlay(alignment: .topTrailing) {
+            if snapshot.isStale(at: context.date, interval: staleAfter) {
+                Text("Stale")
+                    .font(.caption2.weight(.medium))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.quaternary, in: Capsule())
+                    .padding(8)
+            }
+        }
+        }
     }
 }

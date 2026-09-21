@@ -25,6 +25,8 @@ The app runs as an accessory application (no Dock icon). Choose **Settings…** 
 - Explicit credential-source state
 - Accessible status text and quota controls
 - Test seams for provider adapters, persistence, and time
+- Keychain-backed app credential storage and OAuth PKCE/device-flow primitives
+- Automatic interval polling, wake refresh, and visible stale-data state
 
 See [Architecture](docs/ARCHITECTURE.md) and [Roadmap](docs/ROADMAP.md).
 

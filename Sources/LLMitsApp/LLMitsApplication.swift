@@ -15,22 +15,67 @@ struct LLMitsApplication: App {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let model = AppModel()
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
+    private var settingsWindowController: NSWindowController?
+    private var outsideClickMonitor: Any?
+    private var localClickMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        model.onOpenSettings = { [weak self] in self?.showSettings() }
         configurePopover()
         configureStatusItem()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(didWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
         Task { await model.start() }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+        model.stop()
+    }
+
+    @objc private func didWake() {
+        model.refreshAfterWake()
     }
 
     private func configurePopover() {
         popover.behavior = .transient
+        popover.delegate = self
         popover.contentSize = NSSize(width: 380, height: 420)
         popover.contentViewController = NSHostingController(rootView: PopoverView(model: model))
+    }
+
+    func popoverDidShow(_ notification: Notification) {
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            Task { @MainActor in self?.popover.performClose(nil) }
+        }
+
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self else { return event }
+            if event.window !== self.popover.contentViewController?.view.window {
+                self.popover.performClose(nil)
+            }
+            return event
+        }
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        if let outsideClickMonitor {
+            NSEvent.removeMonitor(outsideClickMonitor)
+            self.outsideClickMonitor = nil
+        }
+        if let localClickMonitor {
+            NSEvent.removeMonitor(localClickMonitor)
+            self.localClickMonitor = nil
+        }
     }
 
     private func configureStatusItem() {
@@ -58,5 +103,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             Task { await model.refreshIfStale() }
         }
+    }
+
+    private func showSettings() {
+        popover.performClose(nil)
+
+        if settingsWindowController == nil {
+            let contentView = SettingsView(model: model)
+                .frame(width: 560, height: 500)
+            let window = NSWindow(contentViewController: NSHostingController(rootView: contentView))
+            window.title = "LLMits Settings"
+            window.styleMask = [.titled, .closable, .miniaturizable]
+            window.isReleasedWhenClosed = false
+            window.center()
+            settingsWindowController = NSWindowController(window: window)
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindowController?.showWindow(nil)
+        settingsWindowController?.window?.makeKeyAndOrderFront(nil)
     }
 }

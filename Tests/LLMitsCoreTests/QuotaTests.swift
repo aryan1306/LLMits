@@ -31,6 +31,14 @@ final class QuotaTests: XCTestCase {
         XCTAssertEqual(QuotaFormatting.countdown(until: now.addingTimeInterval(90_000), now: now), "1d 1h")
     }
 
+    func testFreshnessDescriptionUsesFriendlyRecentLabel() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        XCTAssertEqual(
+            QuotaFormatting.freshnessDescription(since: now.addingTimeInterval(-59), now: now),
+            "a few moments ago"
+        )
+    }
+
     func testStalenessUsesLastSuccessfulFetch() {
         let fetched = Date(timeIntervalSince1970: 1_000)
         let snapshot = UsageSnapshot(provider: .codex, plan: "Plus", windows: [], fetchedAt: fetched)

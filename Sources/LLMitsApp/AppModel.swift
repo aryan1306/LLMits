@@ -12,6 +12,7 @@ final class AppModel: ObservableObject {
         didSet {
             persistPreferences()
             onStatusChange?()
+            if oldValue.pollingMinutes != preferences.pollingMinutes { schedulePolling() }
         }
     }
     @Published var connections: [ProviderConnection] {
@@ -19,11 +20,13 @@ final class AppModel: ObservableObject {
     }
 
     var onStatusChange: (() -> Void)?
+    var onOpenSettings: (() -> Void)?
 
     private let defaults: UserDefaults
     private let snapshotStore: any SnapshotPersisting
     private let providers: [ProviderID: any UsageProviding]
     private var lastManualRefresh: Date?
+    private var pollingTask: Task<Void, Never>?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -64,6 +67,7 @@ final class AppModel: ObservableObject {
         snapshots = (try? await snapshotStore.load()) ?? []
         onStatusChange?()
         if connections.contains(where: \.isConnected) { await refresh() }
+        schedulePolling()
     }
 
     func refreshIfStale() async {
@@ -110,8 +114,29 @@ final class AppModel: ObservableObject {
     }
 
     func openSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        onOpenSettings?()
+    }
+
+    func refreshAfterWake() {
+        Task { await refresh() }
+        schedulePolling()
+    }
+
+    func stop() {
+        pollingTask?.cancel()
+        pollingTask = nil
+    }
+
+    private func schedulePolling() {
+        pollingTask?.cancel()
+        let interval = UInt64(max(1, preferences.pollingMinutes)) * 60 * 1_000_000_000
+        pollingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: interval)
+                guard !Task.isCancelled else { return }
+                await self?.refresh()
+            }
+        }
     }
 
     private func persistPreferences() { Self.encode(preferences, key: "preferences", defaults: defaults) }

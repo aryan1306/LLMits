@@ -9,7 +9,10 @@ let package = Package(
         .executable(name: "LLMits", targets: ["LLMitsApp"]),
     ],
     targets: [
-        .target(name: "LLMitsCore"),
+        .target(
+            name: "LLMitsCore",
+            linkerSettings: [.linkedFramework("Security")]
+        ),
         .executableTarget(name: "LLMitsApp", dependencies: ["LLMitsCore"]),
         .testTarget(name: "LLMitsCoreTests", dependencies: ["LLMitsCore"]),
     ]

@@ -6,13 +6,17 @@
 - Quota domain model, local cache, display conversion, and formatting
 - Replaceable provider/persistence protocols
 - Preview adapters and initial unit tests
+- Device-local Keychain credential store behind a testable protocol
+- OAuth PKCE generation, authorization URL construction, callback parsing, and state validation
+- Codex-compatible device authorization state machine, including slow-down and expiry handling
+- Automatic polling, refresh after wake, stale-card presentation, and reusable bounded backoff policy
 
 ## Next vertical slices
 
-1. Keychain abstraction, Claude PKCE primitives, and callback-code connection flow.
-2. Codex device authorization state machine and polling.
+1. Wire Claude's PKCE primitives to verified client configuration, browser launch, token exchange, and the callback-code Settings flow.
+2. Wire the Codex device authorization state machine to verified device/token endpoints and Settings polling UI.
 3. Sanitized provider fixtures, schema-tolerant parsers, token refresh, and revoked-session handling.
-4. Refresh scheduler with wake handling, server-directed/exponential backoff, and stale presentation.
+4. Apply server-directed/exponential backoff to live provider refresh failures (scheduler, wake handling, policy, and stale presentation are implemented).
 5. CLI credential discovery and explicit source-switch flows.
 6. Launch at Login, GitHub release checks, diagnostics UI, and update indicator.
 7. Branded monochrome assets after trademark/brand review.
