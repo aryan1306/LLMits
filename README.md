@@ -2,39 +2,79 @@
   <img src="docs/assets/llmits-terminal-graffiti.png" alt="LLMits" width="900">
 </p>
 
-LLMits is an open-source macOS menu-bar utility for viewing quota utilization from Claude Code and Codex consumer subscriptions. It targets macOS 14+ and keeps credentials and usage data local.
+LLMits is an open-source macOS menu-bar utility for viewing quota utilization from Claude and ChatGPT subscriptions. It targets macOS 14+ and keeps credentials and usage data local.
 
 > [!IMPORTANT]
-> This repository is at the initial implementation milestone. The UI currently uses explicit preview connections. Real Claude/Codex authentication and quota adapters are not yet implemented because their client configuration and endpoints are unofficial and unstable.
+> LLMits uses provider OAuth and quota endpoints that are not public, supported APIs. Provider-side changes may temporarily break authentication or usage reporting.
+
+## Features
+
+- Live five-hour and weekly quota usage for Claude and ChatGPT
+- Claude subscription plan detection, including Pro and Max tiers
+- Native menu-bar percentages with Claude and ChatGPT icons
+- Used or remaining percentage display modes
+- Secure Claude PKCE and ChatGPT device-code sign-in flows
+- Credentials stored in macOS Keychain
+- Automatic token refresh, configurable polling, and refresh after wake
+- Relative freshness labels, reset times, stale-data indicators, and manual refresh
+- Local snapshot cache so the latest usage remains visible between launches
+- No backend, analytics, telemetry, or account-identity data in cached snapshots
 
 ## Run locally
 
-Requirements: macOS 14+, Xcode 16+ with command-line tools.
+Requirements:
+
+- macOS 14 or newer
+- Xcode 16 or newer, including the command-line tools
+
+Clone and run the project:
 
 ```sh
+git clone https://github.com/aryan1306/LLMits.git
+cd LLMits
 swift test
 swift run LLMits
 ```
 
-The app runs as an accessory application (no Dock icon). Choose **Settings…** from its menu-bar popover and enable preview data for either provider.
+LLMits runs as a menu-bar accessory without a Dock icon. Click its menu-bar item, open **Settings…**, then choose **Connect** beside Claude or ChatGPT:
 
-## Current scope
+- **Claude:** complete authorization in the browser, then paste the authorization code or full callback URL into LLMits.
+- **ChatGPT:** enter the one-time code on the page opened by LLMits and wait for approval.
 
-- AppKit status item and popover hosting SwiftUI views
-- Provider-neutral quota models with five-hour/weekly fallback
-- Used/remaining display conversion and percentage clamping
-- Local latest-snapshot cache (no history or identity)
-- Explicit credential-source state
-- Accessible status text and quota controls
-- Test seams for provider adapters, persistence, and time
-- Keychain-backed app credential storage and OAuth PKCE/device-flow primitives
-- Automatic interval polling, wake refresh, and visible stale-data state
+After connecting, the menu bar shows the configured used or remaining percentage. Open the popover for quota windows, reset times, plan details, and refresh status.
+
+> [!NOTE]
+> Running with `swift run` produces an ad-hoc-signed development executable. macOS may ask for Keychain access again after a rebuild because the executable identity changes. Choose **Always Allow** for the current build, or use a consistently signed app bundle for stable Keychain trust.
+
+## How it works
+
+- AppKit owns the status item and transient popover; SwiftUI renders the popover and settings UI.
+- `LLMitsCore` contains provider-neutral quota models, OAuth flows, endpoint adapters, persistence, formatting, and refresh policy.
+- Claude usage comes from the OAuth usage endpoint and is enriched with profile data for the plan label.
+- ChatGPT usage comes from the Codex usage endpoint associated with the authorized account.
+- Quota values are clamped and normalized before display, with a five-hour window preferred in the menu bar and weekly usage used as a fallback.
 
 See [Architecture](docs/ARCHITECTURE.md) and [Roadmap](docs/ROADMAP.md).
 
+## Development
+
+Run the complete test suite:
+
+```sh
+swift test
+```
+
+Build without launching the app:
+
+```sh
+swift build
+```
+
+The test suite covers authorization primitives, credential storage, provider response parsing, quota calculations, persistence, diagnostics, and refresh policy.
+
 ## Privacy
 
-LLMits has no backend, analytics, telemetry, or crash-reporting service. Production credentials will live in macOS Keychain or remain in their CLI-owned location. Cached quota snapshots contain neither credentials nor account identity.
+LLMits has no backend, analytics, telemetry, or crash-reporting service. OAuth credentials are stored in macOS Keychain. Cached quota snapshots are written locally and contain neither credentials nor account identity.
 
 ## License
 
