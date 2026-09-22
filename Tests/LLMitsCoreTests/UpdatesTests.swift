@@ -42,6 +42,67 @@ final class UpdatesTests: XCTestCase {
         }
     }
 
+    func testCheckerReportsGitHubRateLimitReset() async {
+        let reset = Date(timeIntervalSince1970: 1_800_000_000)
+        let transport = UpdateStubTransport(status: 403, body: Data(), headers: [
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-reset": "1800000000",
+        ])
+        do {
+            _ = try await GitHubUpdateChecker(transport: transport).availableUpdate(currentVersion: "1.0.0")
+            XCTFail("Expected rate limit")
+        } catch {
+            XCTAssertEqual(error as? UpdateCheckError, .rateLimited(until: reset))
+        }
+    }
+
+    func testCheckerPrefersRetryAfter() async {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let transport = UpdateStubTransport(status: 429, body: Data(), headers: ["retry-after": "120"])
+        do {
+            _ = try await GitHubUpdateChecker(transport: transport, now: { now }).availableUpdate(currentVersion: "1.0.0")
+            XCTFail("Expected rate limit")
+        } catch {
+            XCTAssertEqual(error as? UpdateCheckError, .rateLimited(until: now.addingTimeInterval(120)))
+        }
+    }
+
+    func testCheckerTreatsPlainForbiddenAsInvalid() async {
+        let transport = UpdateStubTransport(status: 403, body: Data())
+        do {
+            _ = try await GitHubUpdateChecker(transport: transport).availableUpdate(currentVersion: "1.0.0")
+            XCTFail("Expected invalid response")
+        } catch {
+            XCTAssertEqual(error as? UpdateCheckError, .invalidResponse)
+        }
+    }
+
+    func testThrottleSpacesChecksByMinimumInterval() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        var throttle = UpdateCheckThrottle(minimumInterval: 60)
+        XCTAssertNil(throttle.nextAllowedCheck(at: start))
+
+        throttle.recordCheck(at: start)
+        XCTAssertEqual(throttle.nextAllowedCheck(at: start.addingTimeInterval(30)), start.addingTimeInterval(60))
+        XCTAssertNil(throttle.nextAllowedCheck(at: start.addingTimeInterval(60)))
+    }
+
+    func testThrottleHonorsRateLimitWindow() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        var throttle = UpdateCheckThrottle(minimumInterval: 60)
+        throttle.recordCheck(at: now)
+        throttle.recordRateLimit(until: now.addingTimeInterval(600), now: now)
+        XCTAssertEqual(throttle.nextAllowedCheck(at: now.addingTimeInterval(61)), now.addingTimeInterval(600))
+
+        // An earlier reset never shortens an existing block.
+        throttle.recordRateLimit(until: now.addingTimeInterval(10), now: now)
+        XCTAssertEqual(throttle.blockedUntil, now.addingTimeInterval(600))
+
+        var unknownReset = UpdateCheckThrottle()
+        unknownReset.recordRateLimit(until: nil, now: now)
+        XCTAssertEqual(unknownReset.blockedUntil, now.addingTimeInterval(15 * 60))
+    }
+
     private func release(tag: String) -> Data {
         Data("""
         {"tag_name":"\(tag)","assets":[
@@ -55,15 +116,19 @@ final class UpdatesTests: XCTestCase {
 private actor UpdateStubTransport: HTTPTransporting {
     let status: Int
     let body: Data
+    let headers: [String: String]
     private(set) var request: URLRequest?
+    private(set) var requestCount = 0
 
-    init(status: Int, body: Data) {
+    init(status: Int, body: Data, headers: [String: String] = [:]) {
         self.status = status
         self.body = body
+        self.headers = headers
     }
 
     func send(_ request: URLRequest) -> HTTPResponse {
         self.request = request
-        return HTTPResponse(data: body, statusCode: status)
+        requestCount += 1
+        return HTTPResponse(data: body, statusCode: status, headers: headers)
     }
 }

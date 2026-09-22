@@ -95,7 +95,7 @@ You can also download `LLMits.dmg` from the [latest release](https://github.com/
 
 Release builds are currently ad-hoc signed. On first launch, macOS may require you to right-click LLMits and choose **Open**. A future Developer ID-signed and notarized release will remove this extra confirmation.
 
-Packaged apps check GitHub for a newer published release at launch, every six hours, and after wake. When an update is available, the popover's refresh control becomes a small download icon. Click it for **Update and Relaunch**, **Refresh quotas**, or **Cancel**. After confirmation, LLMits downloads and verifies the release, replaces the app in its current location, then relaunches. Updating requires write access to the app's containing folder. Development builds started with `swift run` do not self-update.
+Packaged apps check GitHub for a newer published release at launch, every six hours, and after wake. When an update is available, the popover's refresh control becomes a small download icon. Click it for **Update and Relaunch**, **Refresh quotas**, or **Cancel**. To check right away, choose **Check Now** under **Settings → Updates**; manual checks are limited to one per minute and pause while GitHub's API rate limit is in effect. After confirmation, LLMits downloads and verifies the release, replaces the app in its current location, then relaunches. Updating requires write access to the app's containing folder. Development builds started with `swift run` do not self-update.
 
 ## How it works
 

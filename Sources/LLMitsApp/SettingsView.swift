@@ -4,6 +4,8 @@ import LLMitsCore
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject var updates: UpdateModel
+    let onRequestUpdate: (AvailableUpdate) -> Void
     @State private var claudeCallback = ""
     @State private var drag: DragState?
 
@@ -57,6 +59,11 @@ struct SettingsView: View {
                             }
                         }
                         .groupedCard()
+                    }
+
+                    section("Updates") {
+                        updateRow
+                            .groupedCard()
                     }
 
                     Text("Credentials and usage data stay on this Mac — no analytics, telemetry, or LLMits backend. LLMits checks GitHub for updates and only installs them with your approval. Provider integrations are unofficial and may change without notice.")
@@ -192,6 +199,53 @@ struct SettingsView: View {
         if isAuthorizing { return "Signing in…" }
         guard connection.isConnected else { return "Not connected" }
         return connection.source == .cli ? "Signed in via agy CLI" : "Connected"
+    }
+
+    // MARK: - Updates
+
+    private var updateRow: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Check for updates")
+                TimelineView(.everyMinute) { context in
+                    Text(updateStatus(now: context.date))
+                        .font(.caption)
+                        .foregroundStyle(showsUpdateError ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            if updates.isChecking {
+                ProgressView().controlSize(.small)
+            }
+            if let update = updates.availableUpdate {
+                Button("Update to \(update.version)…") { onRequestUpdate(update) }
+                    .disabled(updates.isInstalling)
+            } else {
+                Button("Check Now") { Task { await updates.checkForUpdatesManually() } }
+                    .disabled(!updates.canCheck || updates.isChecking || updates.isInstalling || updates.nextManualCheck != nil)
+                    .help(updates.nextManualCheck == nil ? "Check GitHub for a newer release" : "You can check again shortly")
+            }
+        }
+        .controlSize(.small)
+        .frame(minHeight: 44)
+        .padding(.vertical, 4)
+    }
+
+    private var showsUpdateError: Bool {
+        updates.checkErrorMessage != nil && updates.availableUpdate == nil && !updates.isChecking
+    }
+
+    private func updateStatus(now: Date) -> String {
+        guard updates.canCheck else { return "Available in the packaged app." }
+        if updates.isInstalling { return "Installing update…" }
+        if updates.isChecking { return "Checking GitHub…" }
+        if let update = updates.availableUpdate { return "LLMits \(update.version) is available." }
+        if let error = updates.checkErrorMessage { return error }
+        if let lastChecked = updates.lastChecked {
+            return "You’re up to date. Checked \(QuotaFormatting.freshnessDescription(since: lastChecked, now: now))."
+        }
+        return "LLMits also checks automatically every few hours."
     }
 
     // MARK: - Drag to reorder

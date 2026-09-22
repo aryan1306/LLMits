@@ -8,8 +8,12 @@ struct LLMitsApplication: App {
 
     var body: some Scene {
         Settings {
-            SettingsView(model: appDelegate.model)
-                .frame(width: 520, height: 540)
+            SettingsView(
+                model: appDelegate.model,
+                updates: appDelegate.updates,
+                onRequestUpdate: { appDelegate.confirmUpdate($0) }
+            )
+            .frame(width: 520, height: 540)
         }
     }
 }
@@ -61,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         ))
     }
 
-    private func confirmUpdate(_ update: AvailableUpdate) {
+    func confirmUpdate(_ update: AvailableUpdate) {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.updates.availableUpdate?.version == update.version else { return }
             self.popover.close()
@@ -168,8 +172,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.performClose(nil)
 
         if settingsWindowController == nil {
-            let contentView = SettingsView(model: model)
-                .frame(width: 520, height: 540)
+            let contentView = SettingsView(
+                model: model,
+                updates: updates,
+                onRequestUpdate: { [weak self] update in self?.confirmUpdate(update) }
+            )
+            .frame(width: 520, height: 540)
             let window = NSWindow(contentViewController: NSHostingController(rootView: contentView))
             window.title = "LLMits Settings"
             window.styleMask = [.titled, .closable, .miniaturizable]
