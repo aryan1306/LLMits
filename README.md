@@ -22,6 +22,14 @@ LLMits is an open-source macOS menu-bar utility for viewing quota utilization fr
 > [!IMPORTANT]
 > LLMits uses provider OAuth and quota endpoints that are not public, supported APIs. Provider-side changes may temporarily break authentication or usage reporting.
 
+## Quick install
+
+Install the latest release with one command:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh | bash
+```
+
 ## Features
 
 - Live five-hour and weekly quota usage for Claude and ChatGPT
@@ -63,12 +71,6 @@ After connecting, the menu bar shows the configured used or remaining percentage
 > Running with `swift run` produces an ad-hoc-signed development executable. macOS may ask for Keychain access again after a rebuild because the executable identity changes. Choose **Always Allow** for the current build, or use a consistently signed app bundle for stable Keychain trust.
 
 ## Install
-
-Install the latest release with one command:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh | bash
-```
 
 To inspect the script before running it:
 
