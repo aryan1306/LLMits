@@ -45,6 +45,16 @@ curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh | 
 - Automatic GitHub release checks with an in-app, user-approved update and relaunch
 - No backend, analytics, telemetry, or account-identity data in cached snapshots
 
+## Supported subscriptions
+
+| Service | Plans | Sign-in | Quota shown |
+| --- | --- | --- | --- |
+| **Claude** | Pro, Max (5× and 20×), Team, and Enterprise, detected from your account | Browser sign-in, then paste the authorization code | Five-hour and weekly windows |
+| **ChatGPT (Codex)** | ChatGPT plans that include Codex, labeled with the plan reported by the Codex usage endpoint (for example, Plus or Pro) | One-time device code in the browser | Five-hour and weekly windows, plus any additional limits the endpoint reports |
+| **Antigravity** | Google accounts with Antigravity access, labeled with the tier reported by Google | Google browser sign-in, or an existing `agy` CLI login | Gemini and Claude & GPT pools, each with five-hour and, when reported, weekly windows |
+
+Each connection tracks one account per service. Provider usage endpoints are unofficial, so available windows and plan labels can change without notice.
+
 ## Run locally
 
 Requirements:
