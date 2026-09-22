@@ -11,9 +11,11 @@ struct PopoverView: View {
             HStack {
                 Text("LLMits").font(.headline)
                 Spacer()
-                if updates.isInstalling || model.isRefreshing {
-                    ProgressView().controlSize(.small)
-                }
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: 18, height: 18)
+                    .opacity(updates.isInstalling || model.isRefreshing ? 1 : 0)
+                    .accessibilityHidden(!updates.isInstalling && !model.isRefreshing)
                 if let update = updates.availableUpdate {
                     Button { onRequestUpdate(update) } label: {
                         Image(systemName: "arrow.down.circle.fill")
@@ -101,7 +103,7 @@ private struct ProviderCard: View {
                         Text("\(window.percentage(for: mode))% \(mode.rawValue)")
                             .monospacedDigit()
                     }
-                    ProgressView(value: Double(window.percentage(for: mode)), total: 100)
+                    QuotaBar(percentage: window.percentage(for: mode))
                     if let reset = window.resetsAt {
                         Text("Resets in \(QuotaFormatting.countdown(until: reset)) · \(QuotaFormatting.resetTimestamp(reset))")
                             .font(.caption).foregroundStyle(.secondary)
@@ -124,6 +126,24 @@ private struct ProviderCard: View {
             }
         }
         }
+    }
+}
+
+private struct QuotaBar: View {
+    let percentage: Int
+
+    var body: some View {
+        GeometryReader { geometry in
+            Capsule()
+                .fill(.quaternary)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(.tint)
+                        .frame(width: geometry.size.width * CGFloat(percentage) / 100)
+                }
+        }
+        .frame(height: 5)
+        .accessibilityHidden(true)
     }
 }
 
