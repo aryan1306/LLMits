@@ -12,14 +12,15 @@ latest/version.txt
 
 ## Cloudflare setup
 
-1. Use the `llmits-releases` R2 bucket and an API token scoped to **Object Read
-   & Write** for that bucket.
+1. Use the `llmits-releases` R2 bucket and R2 S3 credentials scoped to **Object
+   Read & Write** for that bucket.
 2. Keep `llmits.aryansinghal.in` connected to the bucket with Cloudflare caching
    enabled.
 3. Add these GitHub repository settings:
 
-   - Secret `CLOUDFLARE_API_TOKEN`
    - Secret `CLOUDFLARE_ACCOUNT_ID`
+   - Secret `R2_ACCESS_KEY_ID`
+   - Secret `R2_SECRET_ACCESS_KEY`
    - Variable `R2_BUCKET_NAME`
 
 4. The installer uses `https://llmits.aryansinghal.in` as its default CDN.
