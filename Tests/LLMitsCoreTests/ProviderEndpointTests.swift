@@ -19,6 +19,25 @@ final class ProviderEndpointTests: XCTestCase {
         XCTAssertEqual(snapshot.windows.map(\.id), ["five-hour", "weekly", "fable-weekly"])
         XCTAssertEqual(snapshot.windows.last?.label, "Fable weekly")
         XCTAssertEqual(snapshot.windows.first?.utilization, 0.42)
+        XCTAssertEqual(snapshot.windows[0].resetsAt, ISO8601DateFormatter().date(from: "2026-09-22T01:00:00Z"))
+        XCTAssertEqual(snapshot.windows[1].resetsAt, ISO8601DateFormatter().date(from: "2026-09-28T01:00:00Z"))
+    }
+
+    func testClaudeUsageParserReadsFractionalSecondResetTimes() throws {
+        let data = Data(#"""
+        {
+          "five_hour":{"utilization":0,"resets_at":"2026-09-22T01:00:00.123Z"},
+          "seven_day":{"utilization":78,"resets_at":"2026-09-28T01:00:00.456Z"}
+        }
+        """#.utf8)
+
+        let snapshot = try UsageResponseParser.parse(data, provider: .claude, fetchedAt: .distantPast)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions.insert(.withFractionalSeconds)
+        XCTAssertNotNil(snapshot.windows[0].resetsAt)
+        XCTAssertNotNil(snapshot.windows[1].resetsAt)
+        XCTAssertEqual(snapshot.windows[0].resetsAt, formatter.date(from: "2026-09-22T01:00:00.123Z"))
+        XCTAssertEqual(snapshot.windows[1].resetsAt, formatter.date(from: "2026-09-28T01:00:00.456Z"))
     }
 
     func testClaudeProfileParserMapsSubscriptionAndRateLimitTier() throws {

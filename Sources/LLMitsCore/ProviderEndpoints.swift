@@ -363,7 +363,11 @@ public enum UsageResponseParser {
     private static func number(_ value: Any?) -> Double? { (value as? NSNumber)?.doubleValue }
     private static func date(_ value: Any?) -> Date? {
         guard let value = value as? String else { return nil }
-        return ISO8601DateFormatter().date(from: value)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions.insert(.withFractionalSeconds)
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions.remove(.withFractionalSeconds)
+        return formatter.date(from: value)
     }
 }
 
