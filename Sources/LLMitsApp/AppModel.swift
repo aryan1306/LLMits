@@ -7,6 +7,7 @@ enum AuthorizationPhase: Equatable {
     case starting
     case claudeCallback
     case codexCode(String)
+    case antigravityBrowser
     case exchanging
     case failed(String)
 }
@@ -40,7 +41,9 @@ final class AppModel: ObservableObject {
     private let snapshotStore: any SnapshotPersisting
     private let credentialStore: any CredentialStoring
     private let providers: [ProviderID: any UsageProviding]
+    private let antigravityCLIProvider: any UsageProviding
     private var lastManualRefresh: Date?
+    private var cliRefreshError: String?
     private var pollingTask: Task<Void, Never>?
     private var authorizationTask: Task<Void, Never>?
     private var claudeTransaction: PKCETransaction?
@@ -52,12 +55,17 @@ final class AppModel: ObservableObject {
         snapshotStore = FileSnapshotStore(fileURL: support.appendingPathComponent("latest-usage.json"))
         let credentials = KeychainCredentialStore()
         credentialStore = credentials
-        providers = Dictionary(uniqueKeysWithValues: ProviderID.allCases.map {
-            ($0, RefreshingUsageProvider(id: $0, credentials: credentials) as any UsageProviding)
-        })
+        providers = [
+            .claude: RefreshingUsageProvider(id: .claude, credentials: credentials),
+            .codex: RefreshingUsageProvider(id: .codex, credentials: credentials),
+            .antigravity: AntigravityUsageProvider(credentials: credentials),
+        ]
+        antigravityCLIProvider = AntigravityCLIUsageProvider()
         preferences = Self.decode(AppPreferences.self, key: "preferences", defaults: defaults) ?? AppPreferences()
-        connections = Self.decode([ProviderConnection].self, key: "connections", defaults: defaults)
-            ?? ProviderID.allCases.map { ProviderConnection(provider: $0) }
+        let savedConnections = Self.decode([ProviderConnection].self, key: "connections", defaults: defaults) ?? []
+        connections = ProviderID.allCases.map { provider in
+            savedConnections.first(where: { $0.provider == provider }) ?? ProviderConnection(provider: provider)
+        }
     }
 
     var statusTitle: String {
@@ -66,33 +74,37 @@ final class AppModel: ObservableObject {
     }
 
     var statusItems: [(provider: ProviderID, percentage: Int)] {
-        connectedSnapshots.compactMap { snapshot in
-            guard let window = snapshot.statusWindow else { return nil }
+        preferences.providerOrder.filter(preferences.menuBarProviders.contains).compactMap { provider in
+            guard let snapshot = connectedSnapshots.first(where: { $0.provider == provider }),
+                  let window = snapshot.statusWindow(antigravityPool: preferences.antigravityPool) else { return nil }
             return (snapshot.provider, window.percentage(for: preferences.displayMode))
         }
     }
 
     var statusAccessibilityLabel: String {
         let label = preferences.displayMode == .used ? "used" : "remaining"
-        let items = connectedSnapshots.compactMap { snapshot -> String? in
-            guard let window = snapshot.statusWindow else { return nil }
-            return "\(snapshot.provider.displayName) \(window.percentage(for: preferences.displayMode)) percent \(label)"
+        let items = statusItems.map { item in
+            "\(item.provider.displayName) \(item.percentage) percent \(label)"
         }
         return items.isEmpty ? "no connected providers" : items.joined(separator: ", ")
     }
 
     var connectedSnapshots: [UsageSnapshot] {
-        snapshots.filter { snapshot in
-            connections.contains { $0.provider == snapshot.provider && $0.isConnected }
-        }
+        connectedProviders.compactMap { provider in snapshots.first { $0.provider == provider } }
     }
 
     func start() async {
         snapshots = (try? await snapshotStore.load()) ?? []
         for provider in ProviderID.allCases {
             let hasCredential = (try? await credentialStore.credential(for: provider)) != nil
-            updateConnection(provider, connected: hasCredential)
+            if provider == .antigravity, !hasCredential, preferences.allowAntigravityKeychainFallback,
+               (try? AntigravityCredentialReader.credential()) != nil {
+                updateConnection(provider, connected: true, source: .cli)
+            } else {
+                updateConnection(provider, connected: hasCredential, source: .llmits)
+            }
         }
+        ensureMenuBarSelection()
         onStatusChange?()
         if connections.contains(where: \.isConnected) { await refresh() }
         schedulePolling()
@@ -106,6 +118,7 @@ final class AppModel: ObservableObject {
     func manualRefresh() async {
         guard lastManualRefresh.map({ Date().timeIntervalSince($0) >= 2 }) ?? true else { return }
         lastManualRefresh = Date()
+        cliRefreshError = nil
         await refresh()
     }
 
@@ -116,25 +129,42 @@ final class AppModel: ObservableObject {
         defer { isRefreshing = false }
 
         var updated = snapshots
-        do {
-            for connection in connections where connection.isConnected {
-                guard let provider = providers[connection.provider] else { continue }
+        var failures: [String] = []
+        for connection in connections where connection.isConnected {
+            if connection.provider == .antigravity, connection.source == .cli,
+               let cliRefreshError {
+                failures.append("Antigravity: \(cliRefreshError)")
+                continue
+            }
+            let provider: (any UsageProviding)? = connection.provider == .antigravity && connection.source == .cli
+                ? antigravityCLIProvider : providers[connection.provider]
+            guard let provider else { continue }
+            do {
                 let snapshot = try await provider.fetchUsage()
                 updated.removeAll { $0.provider == snapshot.provider }
                 updated.append(snapshot)
+            } catch {
+                if connection.provider == .antigravity, connection.source == .cli,
+                   error is AntigravityCLIError {
+                    cliRefreshError = error.localizedDescription
+                }
+                failures.append("\(connection.provider.displayName): \(error.localizedDescription)")
             }
+        }
+        do {
             snapshots = updated.sorted { $0.provider.rawValue < $1.provider.rawValue }
             try await snapshotStore.save(snapshots)
             onStatusChange?()
         } catch {
-            errorMessage = error.localizedDescription
+            failures.append(error.localizedDescription)
         }
+        errorMessage = failures.isEmpty ? nil : failures.joined(separator: "\n")
     }
 
-    private func updateConnection(_ provider: ProviderID, connected: Bool) {
+    private func updateConnection(_ provider: ProviderID, connected: Bool, source: CredentialSource = .llmits) {
         guard let index = connections.firstIndex(where: { $0.provider == provider }) else { return }
         connections[index].isConnected = connected
-        if connected { connections[index].source = .llmits }
+        if connected { connections[index].source = source }
     }
 
     func connect(_ provider: ProviderID) {
@@ -146,6 +176,7 @@ final class AppModel: ObservableObject {
                 switch provider {
                 case .claude: try self.beginClaudeAuthorization()
                 case .codex: try await self.runCodexAuthorization()
+                case .antigravity: try await self.runAntigravityAuthorization()
                 }
             } catch is CancellationError {
                 self.authorization = nil
@@ -191,14 +222,75 @@ final class AppModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
+                if provider == .antigravity, connections.first(where: { $0.provider == provider })?.source == .cli {
+                    preferences.allowAntigravityKeychainFallback = false
+                }
                 try await credentialStore.deleteCredential(for: provider)
                 updateConnection(provider, connected: false)
+                if provider == .antigravity { cliRefreshError = nil }
                 snapshots.removeAll { $0.provider == provider }
+                ensureMenuBarSelection()
                 onStatusChange?()
             } catch {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    func connectUsingExistingAntigravityLogin() {
+        authorizationTask?.cancel()
+        authorizationTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                guard try AntigravityCredentialReader.credential() != nil else { throw ProviderError.notConnected }
+                preferences.allowAntigravityKeychainFallback = true
+                updateConnection(.antigravity, connected: true, source: .cli)
+                cliRefreshError = nil
+                authorization = nil
+                ensureMenuBarSelection()
+                await refresh()
+            } catch {
+                authorization = AuthorizationPresentation(provider: .antigravity, phase: .failed(error.localizedDescription))
+            }
+        }
+    }
+
+    /// Connected providers in the user's chosen display order.
+    var connectedProviders: [ProviderID] {
+        preferences.providerOrder.filter { provider in connections.contains { $0.provider == provider && $0.isConnected } }
+    }
+
+    func isShownInMenuBar(_ provider: ProviderID) -> Bool {
+        connectedProviders.contains(provider) && preferences.menuBarProviders.contains(provider)
+    }
+
+    func canToggleMenuBar(_ provider: ProviderID) -> Bool {
+        let shownCount = connectedProviders.filter(preferences.menuBarProviders.contains).count
+        return isShownInMenuBar(provider) ? shownCount > 1 : connectedProviders.contains(provider) && shownCount < 3
+    }
+
+    func setMenuBarProvider(_ provider: ProviderID, enabled: Bool) {
+        var selection = preferences.menuBarProviders
+        if enabled {
+            guard connectedProviders.contains(provider), !selection.contains(provider),
+                  selection.filter({ connectedProviders.contains($0) }).count < 3 else { return }
+            if selection.count == 3 { selection.removeAll { !connectedProviders.contains($0) } }
+            selection.append(provider)
+        } else {
+            guard selection.contains(provider), selection.filter({ connectedProviders.contains($0) }).count > 1 else { return }
+            selection.removeAll { $0 == provider }
+        }
+        preferences.menuBarProviders = selection
+    }
+
+    func moveProvider(_ provider: ProviderID, to index: Int) {
+        var order = preferences.providerOrder
+        guard let source = order.firstIndex(of: provider) else { return }
+        let destination = min(max(index, 0), order.count - 1)
+        guard source != destination else { return }
+        order.remove(at: source)
+        order.insert(provider, at: destination)
+        preferences.providerOrder = order
     }
 
     func openSettings() {
@@ -257,9 +349,53 @@ final class AppModel: ObservableObject {
         throw AuthorizationError.expiredDeviceCode
     }
 
+    private func runAntigravityAuthorization() async throws {
+        let config = try AntigravityOAuthConfig.discover()
+        let transaction = try PKCETransaction.generate()
+        let server = try LoopbackOAuthServer(state: transaction.state)
+        defer { server.cancel() }
+        let redirectURI = try await server.start()
+        try Task.checkCancellation()
+        let authorizationURL = try OAuthAuthorizationConfiguration(
+            authorizationEndpoint: ProviderEndpoints.Antigravity.authorization,
+            clientID: config.clientID,
+            redirectURI: redirectURI,
+            scopes: ProviderEndpoints.Antigravity.scopes,
+            additionalParameters: ["access_type": "offline", "prompt": "consent select_account"]
+        ).authorizationURL(for: transaction)
+        authorization = AuthorizationPresentation(provider: .antigravity, phase: .antigravityBrowser)
+        guard NSWorkspace.shared.open(authorizationURL) else { throw AuthorizationError.invalidAuthorizationURL }
+        let callback = try await server.callback()
+        try Task.checkCancellation()
+        try callback.validate(expectedState: transaction.state)
+        authorization = AuthorizationPresentation(provider: .antigravity, phase: .exchanging)
+        let exchanged = try await OAuthTokenClient().exchangeCode(
+            endpoint: ProviderEndpoints.Antigravity.token,
+            clientID: config.clientID,
+            code: callback.code,
+            verifier: transaction.verifier,
+            redirectURI: redirectURI,
+            additionalFields: ["client_secret": config.clientSecret]
+        )
+        let credential = OAuthCredential(
+            accessToken: exchanged.accessToken,
+            refreshToken: exchanged.refreshToken,
+            expiresAt: exchanged.expiresAt,
+            tokenType: exchanged.tokenType,
+            scopes: exchanged.scopes,
+            idToken: exchanged.idToken,
+            accountID: exchanged.accountID,
+            clientID: config.clientID,
+            clientSecret: config.clientSecret
+        )
+        try Task.checkCancellation()
+        try await finishConnection(credential, provider: .antigravity)
+    }
+
     private func finishConnection(_ credential: OAuthCredential, provider: ProviderID) async throws {
         try await credentialStore.save(credential, for: provider)
         updateConnection(provider, connected: true)
+        ensureMenuBarSelection()
         authorization = nil
         claudeTransaction = nil
         await refresh()
@@ -274,6 +410,16 @@ final class AppModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 await self?.refresh()
             }
+        }
+    }
+
+    private func ensureMenuBarSelection() {
+        guard !connectedProviders.isEmpty else { return }
+        if !preferences.menuBarProviders.contains(where: connectedProviders.contains) {
+            var selection = preferences.menuBarProviders
+            if selection.count == 3 { selection.removeFirst() }
+            selection.append(connectedProviders[0])
+            preferences.menuBarProviders = selection
         }
     }
 

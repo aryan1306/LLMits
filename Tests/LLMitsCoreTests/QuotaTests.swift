@@ -23,6 +23,33 @@ final class QuotaTests: XCTestCase {
         XCTAssertEqual(snapshot.windows.count, 2, "Unknown model limits must be retained")
     }
 
+    func testAntigravityStatusWindowSelectsPoolAndPrefersFiveHour() {
+        let geminiWeekly = QuotaWindow(id: "gemini-weekly", label: "Gemini weekly", utilization: 0.2, resetsAt: nil)
+        let geminiFiveHour = QuotaWindow(id: "gemini-five-hour", label: "Gemini five hour", utilization: 0.4, resetsAt: nil)
+        let claudeWeekly = QuotaWindow(id: "claude-gpt-weekly", label: "Claude weekly", utilization: 0.6, resetsAt: nil)
+        let snapshot = UsageSnapshot(provider: .antigravity, plan: "Pro", windows: [geminiWeekly, claudeWeekly, geminiFiveHour], fetchedAt: .now)
+        XCTAssertEqual(snapshot.statusWindow(antigravityPool: .gemini), geminiFiveHour)
+        XCTAssertEqual(snapshot.statusWindow(antigravityPool: .claudeGPT), claudeWeekly)
+    }
+
+    func testPreferencesMigrateDefaultsForMenuBarAndPool() throws {
+        let old = Data(#"{"displayMode":"remaining","pollingMinutes":15,"showAccountIdentity":true}"#.utf8)
+        let preferences = try JSONDecoder().decode(AppPreferences.self, from: old)
+        XCTAssertEqual(preferences.menuBarProviders, [.claude, .codex])
+        XCTAssertEqual(preferences.antigravityPool, .gemini)
+        XCTAssertEqual(preferences.displayMode, .remaining)
+        XCTAssertEqual(preferences.providerOrder, [.claude, .codex, .antigravity])
+    }
+
+    func testProviderOrderMigratesFromMenuBarOrderAndStaysComplete() throws {
+        let old = Data(#"{"menuBarProviders":["antigravity","claude"]}"#.utf8)
+        var preferences = try JSONDecoder().decode(AppPreferences.self, from: old)
+        XCTAssertEqual(preferences.providerOrder, [.antigravity, .claude, .codex])
+
+        preferences.providerOrder = [.codex, .codex]
+        XCTAssertEqual(preferences.providerOrder, [.codex, .claude, .antigravity])
+    }
+
     func testCountdownBoundaries() {
         let now = Date(timeIntervalSince1970: 1_000)
         XCTAssertEqual(QuotaFormatting.countdown(until: now, now: now), "Now")

@@ -38,9 +38,9 @@ struct PopoverView: View {
 
             if model.connectedSnapshots.isEmpty {
                 ContentUnavailableView(
-                    "No providers connected",
-                    systemImage: "link.badge.plus",
-                    description: Text("Open Settings to choose a credential source.")
+                    model.connectedProviders.isEmpty ? "No providers connected" : "Quota data unavailable",
+                    systemImage: model.connectedProviders.isEmpty ? "link.badge.plus" : "exclamationmark.arrow.triangle.2.circlepath",
+                    description: Text(model.connectedProviders.isEmpty ? "Open Settings to connect a subscription." : "Refresh or check the connection in Settings.")
                 )
                 .frame(maxHeight: .infinity)
             } else {
@@ -50,7 +50,12 @@ struct PopoverView: View {
                             ProviderCard(
                                 snapshot: snapshot,
                                 mode: model.preferences.displayMode,
-                                staleAfter: TimeInterval(model.preferences.pollingMinutes * 60)
+                                staleAfter: TimeInterval(model.preferences.pollingMinutes * 60),
+                                isShownInMenuBar: model.isShownInMenuBar(snapshot.provider),
+                                canToggleMenuBar: model.canToggleMenuBar(snapshot.provider),
+                                onToggleMenuBar: {
+                                    model.setMenuBarProvider(snapshot.provider, enabled: !model.isShownInMenuBar(snapshot.provider))
+                                }
                             )
                         }
                     }
@@ -81,19 +86,43 @@ private struct ProviderCard: View {
     let snapshot: UsageSnapshot
     let mode: DisplayMode
     let staleAfter: TimeInterval
+    let isShownInMenuBar: Bool
+    let canToggleMenuBar: Bool
+    let onToggleMenuBar: () -> Void
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
+        let isStale = snapshot.isStale(at: context.date, interval: staleAfter)
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 ProviderIcon(provider: snapshot.provider)
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(snapshot.provider.displayName).font(.headline)
-                    Text(snapshot.plan).font(.caption).foregroundStyle(.secondary)
+                    Text(snapshot.provider.displayName).font(.headline).fixedSize()
+                    Text(snapshot.plan).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
-                Text("Updated \(QuotaFormatting.freshnessDescription(since: snapshot.fetchedAt, now: context.date))")
-                    .font(.caption2).foregroundStyle(.secondary)
+                Button(action: onToggleMenuBar) {
+                    Image(systemName: isShownInMenuBar ? "pin.fill" : "pin")
+                        .foregroundStyle(isShownInMenuBar ? .primary : .secondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(!canToggleMenuBar)
+                .help(isShownInMenuBar ? "Remove from menu bar" : "Show in menu bar")
+                .accessibilityLabel(isShownInMenuBar ? "Remove \(snapshot.provider.displayName) from menu bar" : "Show \(snapshot.provider.displayName) in menu bar")
+                let freshness = QuotaFormatting.freshnessDescription(since: snapshot.fetchedAt, now: context.date)
+                if isStale {
+                    Text("Stale · \(freshness)")
+                        .font(.caption2.weight(.medium))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.quaternary, in: Capsule())
+                        .fixedSize()
+                        .help("Last updated \(freshness)")
+                } else {
+                    Text("Updated \(freshness)")
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .fixedSize()
+                }
             }
             ForEach(snapshot.windows) { window in
                 VStack(alignment: .leading, spacing: 4) {
@@ -110,21 +139,11 @@ private struct ProviderCard: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
+                .opacity(isStale ? 0.62 : 1)
             }
         }
         .padding(12)
         .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
-        .opacity(snapshot.isStale(at: context.date, interval: staleAfter) ? 0.62 : 1)
-        .overlay(alignment: .topTrailing) {
-            if snapshot.isStale(at: context.date, interval: staleAfter) {
-                Text("Stale")
-                    .font(.caption2.weight(.medium))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.quaternary, in: Capsule())
-                    .padding(8)
-            }
-        }
         }
     }
 }
@@ -144,28 +163,5 @@ private struct QuotaBar: View {
         }
         .frame(height: 5)
         .accessibilityHidden(true)
-    }
-}
-
-private struct ProviderIcon: View {
-    let provider: ProviderID
-
-    var body: some View {
-        if let url = Bundle.module.url(
-            forResource: provider == .claude ? "claude" : "chatgpt",
-            withExtension: "svg"
-        ), let image = NSImage(contentsOf: url) {
-            Image(nsImage: image)
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .foregroundStyle(
-                    provider == .claude
-                        ? Color(red: 0.85, green: 0.47, blue: 0.34)
-                        : Color(red: 0.06, green: 0.64, blue: 0.50)
-                )
-                .frame(width: 22, height: 22)
-                .accessibilityHidden(true)
-        }
     }
 }

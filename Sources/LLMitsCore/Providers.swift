@@ -34,14 +34,33 @@ public struct PreviewUsageProvider: UsageProviding {
 
     public func fetchUsage() async throws -> UsageSnapshot {
         let date = now()
-        let base = id == .claude ? 0.42 : 0.67
-        return UsageSnapshot(
-            provider: id,
-            plan: id == .claude ? "Max" : "Plus",
-            windows: [
+        let base: Double = switch id {
+        case .claude: 0.42
+        case .codex: 0.67
+        case .antigravity: 0.31
+        }
+        let plan: String = switch id {
+        case .claude: "Max"
+        case .codex: "Plus"
+        case .antigravity: "Pro"
+        }
+        let windows: [QuotaWindow] = if id == .antigravity {
+            [
+                QuotaWindow(id: "gemini-five-hour", label: "Gemini five-hour quota", utilization: base, resetsAt: date.addingTimeInterval(7_200)),
+                QuotaWindow(id: "gemini-weekly", label: "Gemini weekly quota", utilization: base / 2, resetsAt: date.addingTimeInterval(259_200)),
+                QuotaWindow(id: "claude-gpt-five-hour", label: "Claude & GPT five-hour quota", utilization: 0.18, resetsAt: date.addingTimeInterval(7_200)),
+                QuotaWindow(id: "claude-gpt-weekly", label: "Claude & GPT weekly quota", utilization: 0.09, resetsAt: date.addingTimeInterval(259_200)),
+            ]
+        } else {
+            [
                 QuotaWindow(id: "five-hour", label: "Five-hour quota", utilization: base, resetsAt: date.addingTimeInterval(7_200)),
                 QuotaWindow(id: "weekly", label: "Weekly quota", utilization: base / 2, resetsAt: date.addingTimeInterval(259_200)),
-            ],
+            ]
+        }
+        return UsageSnapshot(
+            provider: id,
+            plan: plan,
+            windows: windows,
             fetchedAt: date
         )
     }

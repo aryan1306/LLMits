@@ -87,6 +87,83 @@ final class ProviderEndpointTests: XCTestCase {
         XCTAssertEqual(snapshot.windows[2].utilization, 0.11)
     }
 
+    func testAntigravitySummaryParsesBothPoolsAndWindows() throws {
+        let data = Data(#"{"groups":[{"displayName":"Gemini","buckets":[{"displayName":"Five hour","remainingFraction":0.7,"resetTime":"2026-09-22T10:00:00Z"},{"displayName":"Weekly","remainingFraction":0.5}]},{"displayName":"Claude & GPT","buckets":[{"displayName":"Five hour","remainingFraction":0.8},{"displayName":"Weekly","remainingFraction":0.9}]}]}"#.utf8)
+        let snapshot = try UsageResponseParser.parseAntigravity(data, fetchedAt: .distantPast, plan: "Pro")
+        XCTAssertEqual(snapshot.windows.map(\.id), ["gemini-five-hour", "gemini-weekly", "claude-gpt-five-hour", "claude-gpt-weekly"])
+        XCTAssertEqual(snapshot.windows[0].utilization, 0.3, accuracy: 0.0001)
+        XCTAssertEqual(snapshot.windows[0].resetsAt, ISO8601DateFormatter().date(from: "2026-09-22T10:00:00Z"))
+    }
+
+    func testAntigravitySummaryParsesWrappedNestedRemaining() throws {
+        let data = Data(#"{"response":{"groups":[{"displayName":"Gemini Models","buckets":[{"bucketId":"gemini-weekly","remaining":{"remainingFraction":0.85},"resetTime":"2026-09-29T10:00:00Z"},{"bucketId":"gemini-5h","remaining":{"remainingFraction":0.6}}]},{"displayName":"Claude and GPT models","buckets":[{"bucketId":"3p-weekly","remaining":{"remainingFraction":0.9}},{"bucketId":"3p-5h","remaining":{"remainingFraction":0.7}}]}]}}"#.utf8)
+        let snapshot = try UsageResponseParser.parseAntigravity(data, fetchedAt: .distantPast)
+        XCTAssertEqual(snapshot.windows.map(\.id), ["gemini-weekly", "gemini-five-hour", "claude-gpt-weekly", "claude-gpt-five-hour"])
+        XCTAssertEqual(snapshot.statusWindow(antigravityPool: .gemini)?.percentage(for: .remaining), 60)
+        XCTAssertEqual(snapshot.statusWindow(antigravityPool: .claudeGPT)?.percentage(for: .remaining), 70)
+    }
+
+    func testAntigravityCLIReportUnwrapsCommandData() throws {
+        let data = Data(#"{"command":{"data":{"groups":[{"name":"Gemini Models","buckets":[{"window":"weekly","remaining_fraction":0.42},{"window":"5h","remaining_fraction":0.8}]},{"name":"Claude and GPT models","buckets":[{"window":"weekly","remaining_fraction":0.6}]}]}}}"#.utf8)
+        let snapshot = try UsageResponseParser.parseAntigravity(data, fetchedAt: .distantPast)
+        XCTAssertEqual(snapshot.windows.map(\.id), ["gemini-weekly", "gemini-five-hour", "claude-gpt-weekly"])
+        XCTAssertEqual(snapshot.windows.first?.percentage(for: .remaining), 42)
+    }
+
+    func testAntigravityCLIProviderReportsMissingSignInWithoutParsingOutput() async {
+        let provider = AntigravityCLIUsageProvider(executable: URL(fileURLWithPath: "/usr/bin/false"))
+        do {
+            _ = try await provider.fetchUsage()
+            XCTFail("Expected a failed CLI report")
+        } catch {
+            XCTAssertEqual(error as? AntigravityCLIError, .signInRequired)
+        }
+    }
+
+    func testAntigravityProviderAcceptsObjectProjectID() async throws {
+        let credentials = InMemoryCredentialStore()
+        await credentials.save(OAuthCredential(accessToken: "access"), for: .antigravity)
+        let transport = RecordingTransport(responses: [
+            HTTPResponse(data: Data(#"{"cloudaicompanionProject":{"id":"project-2"}}"#.utf8), statusCode: 200),
+            HTTPResponse(data: Data(), statusCode: 404),
+            HTTPResponse(data: Data(#"{"models":{"gemini-pro":{"quotaInfo":{"remainingFraction":0.45}}}}"#.utf8), statusCode: 200),
+        ])
+        _ = try await AntigravityUsageProvider(credentials: credentials, transport: transport).fetchUsage()
+        let requests = await transport.recordedRequests()
+        XCTAssertEqual(try jsonBody(requests[2])["project"] as? String, "project-2")
+    }
+
+    func testAntigravityProviderUsesSummaryAndKeepsBothPools() async throws {
+        let credentials = InMemoryCredentialStore()
+        await credentials.save(OAuthCredential(accessToken: "access"), for: .antigravity)
+        let transport = RecordingTransport(responses: [
+            HTTPResponse(data: Data(#"{"cloudaicompanionProject":"project-1","currentTier":{"name":"Pro"}}"#.utf8), statusCode: 200),
+            HTTPResponse(data: Data(#"{"groups":[{"displayName":"Gemini","buckets":[{"displayName":"Five hour","remainingFraction":0.75}]},{"displayName":"Claude & GPT","buckets":[{"displayName":"Weekly","remainingFraction":0.5}]}]}"#.utf8), statusCode: 200),
+        ])
+        let snapshot = try await AntigravityUsageProvider(credentials: credentials, transport: transport).fetchUsage()
+        XCTAssertEqual(snapshot.plan, "Pro")
+        XCTAssertEqual(snapshot.windows.map(\.id), ["gemini-five-hour", "claude-gpt-weekly"])
+        let requests = await transport.recordedRequests()
+        XCTAssertEqual(requests.map(\.url), [ProviderEndpoints.Antigravity.loadCodeAssist, ProviderEndpoints.Antigravity.quotaSummary])
+        XCTAssertEqual(try jsonBody(requests[1])["project"] as? String, "project-1")
+    }
+
+    func testAntigravityProviderFallsBackToProjectScopedModels() async throws {
+        let credentials = InMemoryCredentialStore()
+        await credentials.save(OAuthCredential(accessToken: "access"), for: .antigravity)
+        let transport = RecordingTransport(responses: [
+            HTTPResponse(data: Data(#"{"cloudaicompanionProject":"project-1"}"#.utf8), statusCode: 200),
+            HTTPResponse(data: Data(), statusCode: 404),
+            HTTPResponse(data: Data(#"{"models":{"gemini-pro":{"quotaInfo":{"remainingFraction":0.45}},"claude-sonnet":{"quotaInfo":{"remainingFraction":0.8}}}}"#.utf8), statusCode: 200),
+        ])
+        let snapshot = try await AntigravityUsageProvider(credentials: credentials, transport: transport).fetchUsage()
+        XCTAssertEqual(Set(snapshot.windows.map(\.id)), Set(["gemini-five-hour", "claude-gpt-five-hour"]))
+        let requests = await transport.recordedRequests()
+        XCTAssertEqual(requests.last?.url, ProviderEndpoints.Antigravity.availableModels)
+        XCTAssertEqual(try jsonBody(requests[2])["project"] as? String, "project-1")
+        XCTAssertNil(try jsonBody(requests[2])["metadata"])
+    }
+
     func testTokenExchangeDecodesCredentialAndExpiry() async throws {
         let now = Date(timeIntervalSince1970: 1_000)
         let response = HTTPResponse(

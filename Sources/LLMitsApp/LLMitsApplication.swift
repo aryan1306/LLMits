@@ -9,7 +9,7 @@ struct LLMitsApplication: App {
     var body: some Scene {
         Settings {
             SettingsView(model: appDelegate.model)
-                .frame(width: 560, height: 500)
+                .frame(width: 520, height: 540)
         }
     }
 }
@@ -148,9 +148,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func providerImage(_ provider: ProviderID) -> NSImage? {
-        let name = provider == .claude ? "claude" : "chatgpt"
-        guard let url = Bundle.module.url(forResource: name, withExtension: "svg"),
-              let image = NSImage(contentsOf: url) else { return nil }
+        let image = provider.iconImage
+        // The Antigravity mark is monochrome, so let AppKit tint it for light and dark menu bars.
+        if provider == .antigravity { image?.isTemplate = true }
         return image
     }
 
@@ -169,7 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         if settingsWindowController == nil {
             let contentView = SettingsView(model: model)
-                .frame(width: 560, height: 500)
+                .frame(width: 520, height: 540)
             let window = NSWindow(contentViewController: NSHostingController(rootView: contentView))
             window.title = "LLMits Settings"
             window.styleMask = [.titled, .closable, .miniaturizable]

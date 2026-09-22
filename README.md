@@ -7,7 +7,7 @@
   <a href="https://github.com/aryan1306/LLMits/releases/latest"><img src="https://img.shields.io/github/v/release/aryan1306/LLMits" alt="Latest release"></a>
 </p>
 
-LLMits is an open-source macOS menu-bar utility for viewing quota utilization from Claude and ChatGPT subscriptions. It targets macOS 14+ and keeps credentials and usage data local.
+LLMits is an open-source macOS menu-bar utility for viewing quota utilization from Claude, ChatGPT, and Antigravity subscriptions. It targets macOS 14+ and keeps credentials and usage data local.
 
 ## Product preview
 
@@ -32,11 +32,12 @@ curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh | 
 
 ## Features
 
-- Live five-hour and weekly quota usage for Claude and ChatGPT
+- Live quota usage for Claude, ChatGPT, and Antigravity, including Antigravity's Gemini and Claude & GPT pools when reported
 - Claude subscription plan detection, including Pro and Max tiers
-- Native menu-bar percentages with Claude and ChatGPT icons
+- Choose one to three connected providers for the menu bar; Claude and Codex are selected by default
+- Pin providers from the popover and drag to reorder them in Settings; the popover shows every connected provider
 - Used or remaining percentage display modes
-- Secure Claude PKCE and ChatGPT device-code sign-in flows
+- Claude PKCE, ChatGPT device-code, and Google browser sign-in flows
 - Credentials stored in macOS Keychain
 - Automatic token refresh, configurable polling, and refresh after wake
 - Relative freshness labels, reset times, stale-data indicators, and manual refresh
@@ -60,12 +61,15 @@ swift test
 swift run LLMits
 ```
 
-LLMits runs as a menu-bar accessory without a Dock icon. Click its menu-bar item, open **Settings…**, then choose **Connect** beside Claude or ChatGPT:
+LLMits runs as a menu-bar accessory without a Dock icon. Click its menu-bar item, open **Settings…**, then choose **Connect** beside a provider:
 
 - **Claude:** complete authorization in the browser, then paste the authorization code or full callback URL into LLMits.
 - **ChatGPT:** enter the one-time code on the page opened by LLMits and wait for approval.
+- **Antigravity:** complete Google sign-in in your browser when Antigravity.app is installed. The `agy` CLI alone cannot supply LLMits' browser OAuth callback; sign in with `agy` in Terminal to use its existing login instead. CLI connections read the full `/usage` quota report without copying or changing its credentials.
 
-After connecting, the menu bar shows the configured used or remaining percentage. Open the popover for quota windows, reset times, plan details, and refresh status.
+Open **Settings → Connections** to disconnect a provider from LLMits. Disconnecting an `agy` connection does not sign out of the CLI. In **Settings → Menu Bar**, drag selected providers or use the arrow buttons to change their order.
+
+After connecting, the menu bar shows the configured used or remaining percentage. Pin up to three connected providers in the popover, and drag their rows in Settings to set their order. Antigravity uses the Gemini pool by default; choose Claude & GPT in Settings if preferred. Each pool prefers its five-hour window and falls back to weekly when available. Open the popover for every connected provider's available quota windows, reset times, plan details, and refresh status.
 
 > [!NOTE]
 > Running with `swift run` produces an ad-hoc-signed development executable. macOS may ask for Keychain access again after a rebuild because the executable identity changes. Choose **Always Allow** for the current build, or use a consistently signed app bundle for stable Keychain trust.
@@ -99,6 +103,7 @@ Packaged apps check GitHub for a newer published release at launch, every six ho
 - `LLMitsCore` contains provider-neutral quota models, OAuth flows, endpoint adapters, persistence, formatting, and refresh policy.
 - Claude usage comes from the OAuth usage endpoint and is enriched with profile data for the plan label.
 - ChatGPT usage comes from the Codex usage endpoint associated with the authorized account.
+- Antigravity usage comes from Google's Cloud Code quota summary, with model-level fallback when the summary is unavailable. The unofficial remote response may omit weekly windows.
 - Quota values are clamped and normalized before display, with a five-hour window preferred in the menu bar and weekly usage used as a fallback.
 
 See [Architecture](docs/ARCHITECTURE.md) and [Roadmap](docs/ROADMAP.md).

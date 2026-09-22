@@ -9,6 +9,8 @@ public struct OAuthCredential: Codable, Equatable, Sendable {
     public let scopes: [String]
     public let idToken: String?
     public let accountID: String?
+    public let clientID: String?
+    public let clientSecret: String?
 
     public init(
         accessToken: String,
@@ -17,7 +19,9 @@ public struct OAuthCredential: Codable, Equatable, Sendable {
         tokenType: String = "Bearer",
         scopes: [String] = [],
         idToken: String? = nil,
-        accountID: String? = nil
+        accountID: String? = nil,
+        clientID: String? = nil,
+        clientSecret: String? = nil
     ) {
         self.accessToken = accessToken
         self.refreshToken = refreshToken
@@ -26,6 +30,54 @@ public struct OAuthCredential: Codable, Equatable, Sendable {
         self.scopes = scopes
         self.idToken = idToken
         self.accountID = accountID
+        self.clientID = clientID
+        self.clientSecret = clientSecret
+    }
+}
+
+public enum AntigravityCredentialReader {
+    /// Reads Antigravity/agy's Go-keyring entry without modifying it.
+    public static func credential() throws -> OAuthCredential? {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "gemini",
+            kSecAttrAccount as String: "antigravity",
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        query.removeAll()
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data,
+              var value = String(data: data, encoding: .utf8) else {
+            throw CredentialStoreError.keychain(status)
+        }
+        let prefix = "go-keyring-base64:"
+        if value.hasPrefix(prefix),
+           let decoded = Data(base64Encoded: String(value.dropFirst(prefix.count))),
+           let text = String(data: decoded, encoding: .utf8) {
+            value = text
+        }
+        guard let payload = value.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else {
+            return nil
+        }
+        let token = (object["token"] as? [String: Any]) ?? object
+        guard let access = token["access_token"] as? String else { return nil }
+        let expiry: Date? = (token["expiry"] as? String).flatMap { value in
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions.insert(.withFractionalSeconds)
+            if let date = formatter.date(from: value) { return date }
+            formatter.formatOptions.remove(.withFractionalSeconds)
+            return formatter.date(from: value)
+        }
+        return OAuthCredential(
+            accessToken: access,
+            refreshToken: token["refresh_token"] as? String,
+            expiresAt: expiry,
+            scopes: ["https://www.googleapis.com/auth/cloud-platform"]
+        )
     }
 }
 

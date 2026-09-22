@@ -22,6 +22,20 @@ public enum ProviderEndpoints {
         public static let usage = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
         public static let redirectURI = "https://auth.openai.com/deviceauth/callback"
     }
+
+    public enum Antigravity {
+        public static let authorization = URL(string: "https://accounts.google.com/o/oauth2/v2/auth")!
+        public static let token = URL(string: "https://oauth2.googleapis.com/token")!
+        public static let userInfo = URL(string: "https://www.googleapis.com/oauth2/v2/userinfo")!
+        public static let loadCodeAssist = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")!
+        public static let quotaSummary = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")!
+        public static let retrieveQuota = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota")!
+        public static let availableModels = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels")!
+        public static let scopes = [
+            "https://www.googleapis.com/auth/cloud-platform",
+            "https://www.googleapis.com/auth/userinfo.email",
+        ]
+    }
 }
 
 public struct HTTPResponse: Sendable {
@@ -87,10 +101,12 @@ public struct OAuthTokenClient: Sendable {
         refreshToken: String,
         scopes: [String] = [],
         now: Date = Date(),
-        encoding: Encoding = .form
+        encoding: Encoding = .form,
+        additionalFields: [String: String] = [:]
     ) async throws -> OAuthCredential {
         var fields = ["grant_type": "refresh_token", "client_id": clientID, "refresh_token": refreshToken]
         if !scopes.isEmpty { fields["scope"] = scopes.joined(separator: " ") }
+        fields.merge(additionalFields) { _, new in new }
         return try await token(endpoint: endpoint, fields: fields, now: now, encoding: encoding)
     }
 
@@ -219,6 +235,7 @@ public struct EndpointUsageProvider: UsageProviding {
 
     public func fetchUsage() async throws -> UsageSnapshot {
         guard let credential = try await credentials.credential(for: id) else { throw ProviderError.notConnected }
+        guard id != .antigravity else { throw ProviderError.invalidResponse }
         var request = URLRequest(url: id == .claude ? ProviderEndpoints.Claude.usage : ProviderEndpoints.Codex.usage)
         request.setValue("Bearer \(credential.accessToken)", forHTTPHeaderField: "Authorization")
         if id == .claude {
@@ -277,6 +294,7 @@ public struct RefreshingUsageProvider: UsageProviding {
     }
 
     public func fetchUsage() async throws -> UsageSnapshot {
+        guard id != .antigravity else { throw ProviderError.invalidResponse }
         guard let existing = try await credentials.credential(for: id) else { throw ProviderError.notConnected }
         if let expiry = existing.expiresAt, expiry <= now().addingTimeInterval(60) {
             guard let refreshToken = existing.refreshToken else { throw ProviderError.revokedSession }
@@ -295,7 +313,9 @@ public struct RefreshingUsageProvider: UsageProviding {
                 tokenType: refreshed.tokenType,
                 scopes: refreshed.scopes.isEmpty ? existing.scopes : refreshed.scopes,
                 idToken: refreshed.idToken ?? existing.idToken,
-                accountID: refreshed.accountID ?? existing.accountID
+                accountID: refreshed.accountID ?? existing.accountID,
+                clientID: existing.clientID,
+                clientSecret: existing.clientSecret
             )
             try await credentials.save(merged, for: id)
         }
@@ -308,6 +328,7 @@ public enum UsageResponseParser {
         switch provider {
         case .claude: try parseClaude(data, fetchedAt: fetchedAt)
         case .codex: try parseCodex(data, fetchedAt: fetchedAt)
+        case .antigravity: try parseAntigravity(data, fetchedAt: fetchedAt)
         }
     }
 
@@ -360,8 +381,76 @@ public enum UsageResponseParser {
         return UsageSnapshot(provider: .codex, plan: payload.planType?.capitalized ?? "Codex", windows: windows, fetchedAt: fetchedAt)
     }
 
+    public static func parseAntigravity(_ data: Data, fetchedAt: Date, plan: String = "Antigravity") throws -> UsageSnapshot {
+        let root = try JSONSerialization.jsonObject(with: data)
+        guard let object = root as? [String: Any] else { throw ProviderError.invalidResponse }
+        let command = object["command"] as? [String: Any]
+        let commandData = command?["data"] as? [String: Any]
+        let payload = commandData
+            ?? (object["quota_summary"] as? [String: Any])
+            ?? (object["response"] as? [String: Any])
+            ?? (object["summary"] as? [String: Any])
+            ?? object
+        guard let groups = payload["groups"] as? [[String: Any]] else {
+            return try parseAntigravityModels(payload, fetchedAt: fetchedAt, plan: plan)
+        }
+        var windows: [QuotaWindow] = []
+        for group in groups {
+            let groupName = ((group["displayName"] ?? group["name"]) as? String ?? "").lowercased()
+            let pool: String
+            if groupName.contains("gemini") { pool = "gemini" }
+            else if groupName.contains("claude") || groupName.contains("gpt") { pool = "claude-gpt" }
+            else { continue }
+            for bucket in group["buckets"] as? [[String: Any]] ?? [] {
+                if bucket["disabled"] as? Bool == true { continue }
+                let bucketName = ["window", "bucketId", "bucket_id", "displayName", "display_name", "name", "id"]
+                    .compactMap { bucket[$0] as? String }.joined(separator: " ").lowercased()
+                let cadence = bucketName.contains("week") ? "weekly" : "five-hour"
+                let nested = bucket["remaining"] as? [String: Any]
+                guard let remaining = number(bucket["remainingFraction"])
+                    ?? number(bucket["remaining_fraction"])
+                    ?? number(nested?["remainingFraction"])
+                    ?? number(nested?["remaining_fraction"])
+                    ?? number(nested?["value"]) else { continue }
+                let labelPool = pool == "gemini" ? "Gemini" : "Claude & GPT"
+                windows.append(QuotaWindow(
+                    id: "\(pool)-\(cadence)",
+                    label: "\(labelPool) \(cadence == "weekly" ? "weekly" : "five-hour") quota",
+                    utilization: 1 - remaining,
+                    resetsAt: date(bucket["resetTime"] ?? bucket["reset_time"] ?? nested?["resetTime"] ?? nested?["reset_time"])
+                ))
+            }
+        }
+        guard !windows.isEmpty else { throw ProviderError.invalidResponse }
+        return UsageSnapshot(provider: .antigravity, plan: plan, windows: windows, fetchedAt: fetchedAt)
+    }
+
+    private static func parseAntigravityModels(_ object: [String: Any], fetchedAt: Date, plan: String) throws -> UsageSnapshot {
+        guard let models = object["models"] as? [String: [String: Any]] else { throw ProviderError.invalidResponse }
+        var worst: [String: (Double, Date?)] = [:]
+        for (modelID, model) in models {
+            guard let quota = model["quotaInfo"] as? [String: Any],
+                  let remaining = number(quota["remainingFraction"]) else { continue }
+            let pool = modelID.lowercased().contains("gemini") ? "gemini" : "claude-gpt"
+            if worst[pool] == nil || remaining < worst[pool]!.0 {
+                worst[pool] = (remaining, date(quota["resetTime"]))
+            }
+        }
+        let windows = worst.sorted(by: { $0.key > $1.key }).map { pool, value in
+            QuotaWindow(
+                id: "\(pool)-five-hour",
+                label: "\(pool == "gemini" ? "Gemini" : "Claude & GPT") five-hour quota",
+                utilization: 1 - value.0,
+                resetsAt: value.1
+            )
+        }
+        guard !windows.isEmpty else { throw ProviderError.invalidResponse }
+        return UsageSnapshot(provider: .antigravity, plan: plan, windows: windows, fetchedAt: fetchedAt)
+    }
+
     private static func number(_ value: Any?) -> Double? { (value as? NSNumber)?.doubleValue }
     private static func date(_ value: Any?) -> Date? {
+        if let epoch = number(value) { return Date(timeIntervalSince1970: epoch) }
         guard let value = value as? String else { return nil }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions.insert(.withFractionalSeconds)

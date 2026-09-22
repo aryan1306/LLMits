@@ -8,6 +8,7 @@ public enum AuthorizationError: LocalizedError, Equatable, Sendable {
     case invalidCallback
     case stateMismatch
     case expiredDeviceCode
+    case expiredBrowserSignIn
     case authorizationDenied
 
     public var errorDescription: String? {
@@ -17,6 +18,7 @@ public enum AuthorizationError: LocalizedError, Equatable, Sendable {
         case .invalidCallback: "The pasted authorization response is invalid."
         case .stateMismatch: "The authorization response did not match this connection attempt."
         case .expiredDeviceCode: "The device authorization code expired."
+        case .expiredBrowserSignIn: "Google sign-in timed out. Try connecting again."
         case .authorizationDenied: "Authorization was denied."
         }
     }
@@ -94,6 +96,11 @@ public struct OAuthAuthorizationConfiguration: Equatable, Sendable {
 public struct OAuthCallback: Equatable, Sendable {
     public let code: String
     public let state: String
+
+    public init(code: String, state: String) {
+        self.code = code
+        self.state = state
+    }
 
     public static func parse(_ pastedValue: String) throws -> OAuthCallback {
         let value = pastedValue.trimmingCharacters(in: .whitespacesAndNewlines)
