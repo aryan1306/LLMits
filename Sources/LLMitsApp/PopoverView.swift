@@ -138,7 +138,7 @@ private struct QuotaBar: View {
                 .fill(.quaternary)
                 .overlay(alignment: .leading) {
                     Capsule()
-                        .fill(.tint)
+                        .fill(.primary.opacity(0.72))
                         .frame(width: geometry.size.width * CGFloat(percentage) / 100)
                 }
         }
