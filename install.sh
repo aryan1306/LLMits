@@ -6,6 +6,7 @@ REPOSITORY="aryan1306/LLMits"
 VERSION="latest"
 INSTALL_DIR="/Applications"
 USE_COLOR=0
+CDN_BASE_URL="${LLMITS_CDN_BASE_URL:-https://llmits.aryansinghal.in}"
 
 if [[ -t 1 && "${TERM:-dumb}" != "dumb" && -z "${NO_COLOR:-}" ]]; then
     USE_COLOR=1
@@ -38,47 +39,106 @@ show_banner() {
     printf '\n\n'
 }
 
-download() {
-    local label="$1"
-    local url="$2"
-    local destination="$3"
-    local error_log="$WORK_DIR/curl-error.log"
-    local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-    local index=0
+human_bytes() {
+    awk -v bytes="$1" 'BEGIN {
+        if (bytes >= 1048576) printf "%.1f MB", bytes / 1048576
+        else if (bytes >= 1024) printf "%.0f KB", bytes / 1024
+        else printf "%d B", bytes
+    }'
+}
+
+fetch_file() {
+    local destination="$1"
+    local show_progress="$2"
+    shift 2
+    local partial="$destination.part"
+    local error_log="$destination.curl-error.log"
+    local url
+    local curl_options=(
+        --fail
+        --location
+        --show-error
+        --connect-timeout 10
+        --retry 3
+        --retry-delay 1
+        --retry-all-errors
+    )
 
     : > "$error_log"
-    curl --fail --location --silent --show-error "$url" --output "$destination" 2>"$error_log" &
-    local curl_pid=$!
+    for url in "$@"; do
+        [[ -n "$url" ]] || continue
+        if [[ "$show_progress" -eq 1 && -t 1 ]]; then
+            if curl "${curl_options[@]}" --progress-bar --output "$partial" "$url"; then
+                mv "$partial" "$destination"
+                return 0
+            fi
+        elif curl "${curl_options[@]}" --silent --output "$partial" "$url" 2>"$error_log"; then
+            mv "$partial" "$destination"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+download_release() {
+    local application_url="$GITHUB_DOWNLOAD_BASE/LLMits.dmg"
+    local checksum_url="$GITHUB_DOWNLOAD_BASE/LLMits.dmg.sha256"
+    local cdn_application_url=""
+    local cdn_checksum_url=""
+    local started_at=$SECONDS
+
+    if [[ -n "$CDN_BASE_URL" ]]; then
+        local cdn_release_path="$RELEASE_PATH"
+        if [[ "$VERSION" == "latest" ]]; then
+            local mirrored_version
+            mirrored_version=$(curl --fail --location --silent \
+                --connect-timeout 3 --max-time 5 \
+                "$CDN_BASE_URL/latest/version.txt" 2>/dev/null || true)
+            if [[ "$mirrored_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                cdn_release_path="releases/$mirrored_version"
+            else
+                cdn_release_path=""
+            fi
+        fi
+        if [[ -n "$cdn_release_path" ]]; then
+            cdn_application_url="$CDN_BASE_URL/$cdn_release_path/LLMits.dmg"
+            cdn_checksum_url="$CDN_BASE_URL/$cdn_release_path/LLMits.dmg.sha256"
+        fi
+    fi
+
+    fetch_file "$CHECKSUM_PATH" 0 "$cdn_checksum_url" "$checksum_url" &
+    local checksum_pid=$!
 
     if [[ -t 1 ]]; then
-        printf '\033[?25l'
-        while kill -0 "$curl_pid" 2>/dev/null; do
-            printf '\r  '
-            paint "38;5;208" "${frames[$index]}"
-            printf ' %s' "$label"
-            index=$(( (index + 1) % ${#frames[@]} ))
-            sleep 0.08
-        done
+        printf '  Downloading application\n  '
     else
-        printf '  • %s\n' "$label"
+        printf '  • Downloading application and checksum\n'
     fi
 
-    if wait "$curl_pid"; then
+    local failed=0
+    fetch_file "$DMG_PATH" 1 "$cdn_application_url" "$application_url" || failed=1
+    wait "$checksum_pid" || failed=1
+
+    if [[ "$failed" -eq 0 ]]; then
         if [[ -t 1 ]]; then
-            printf '\r  '
+            printf '  '
             paint "32" '✓'
-            printf ' %s\033[K\n' "$label"
-            printf '\033[?25h'
+            printf ' Downloaded %s in %ss\n' \
+                "$(human_bytes "$(stat -f '%z' "$DMG_PATH")")" "$(( SECONDS - started_at ))"
         fi
-    else
-        if [[ -t 1 ]]; then
-            printf '\r  '
-            paint "31" '✗'
-            printf ' %s\033[K\n\033[?25h' "$label"
-        fi
-        sed 's/^/    /' "$error_log" >&2
-        return 1
+        return 0
     fi
+
+    if [[ -t 1 ]]; then
+        printf '  '
+        paint "31" '✗'
+        printf ' Download failed\n'
+    fi
+    for error_log in "$DMG_PATH.curl-error.log" "$CHECKSUM_PATH.curl-error.log"; do
+        [[ -s "$error_log" ]] && sed 's/^/    /' "$error_log" >&2
+    done
+    return 1
 }
 
 usage() {
@@ -119,10 +179,12 @@ fi
 show_banner
 
 if [[ "$VERSION" == "latest" ]]; then
-    DOWNLOAD_BASE="https://github.com/$REPOSITORY/releases/latest/download"
+    RELEASE_PATH="latest"
+    GITHUB_DOWNLOAD_BASE="https://github.com/$REPOSITORY/releases/latest/download"
 else
     [[ "$VERSION" == v* ]] || VERSION="v$VERSION"
-    DOWNLOAD_BASE="https://github.com/$REPOSITORY/releases/download/$VERSION"
+    RELEASE_PATH="releases/$VERSION"
+    GITHUB_DOWNLOAD_BASE="https://github.com/$REPOSITORY/releases/download/$VERSION"
 fi
 
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/llmits-install.XXXXXX")"
@@ -144,8 +206,7 @@ trap cleanup EXIT
 
 paint "1" "  Installing LLMits ($VERSION)"
 printf '\n\n'
-download "Downloading application" "$DOWNLOAD_BASE/LLMits.dmg" "$DMG_PATH"
-download "Downloading checksum" "$DOWNLOAD_BASE/LLMits.dmg.sha256" "$CHECKSUM_PATH"
+download_release
 
 EXPECTED_SHA="$(awk '{print $1}' "$CHECKSUM_PATH")"
 ACTUAL_SHA="$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"

@@ -60,3 +60,43 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" dist/LLMits.dmg dist/LLMits.dmg.sha256 --generate-notes --title "LLMits $GITHUB_REF_NAME"
           fi
+
+      - name: Mirror release to Cloudflare R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?Set the CLOUDFLARE_API_TOKEN repository secret}"
+          : "${CLOUDFLARE_ACCOUNT_ID:?Set the CLOUDFLARE_ACCOUNT_ID repository secret}"
+          : "${R2_BUCKET_NAME:?Set the R2_BUCKET_NAME repository variable}"
+
+          upload() {
+            local source="$1"
+            local key="$2"
+            local cache_control="$3"
+            local content_type="$4"
+            npx --yes wrangler@4 r2 object put "$R2_BUCKET_NAME/$key" \
+              --file "$source" \
+              --content-type "$content_type" \
+              --content-disposition "attachment; filename=$(basename "$source")" \
+              --cache-control "$cache_control" \
+              --remote
+          }
+
+          release_tag="v$RELEASE_VERSION"
+          for asset in LLMits.dmg LLMits.dmg.sha256; do
+            if [[ "$asset" == *.dmg ]]; then
+              content_type="application/x-apple-diskimage"
+            else
+              content_type="text/plain; charset=utf-8"
+            fi
+            upload "dist/$asset" "releases/$release_tag/$asset" \
+              "public, max-age=31536000, immutable" "$content_type"
+          done
+
+          printf '%s' "$release_tag" > dist/version.txt
+          upload dist/version.txt latest/version.txt \
+            "no-cache" "text/plain; charset=utf-8"
