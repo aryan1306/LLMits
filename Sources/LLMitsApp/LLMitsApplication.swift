@@ -17,6 +17,7 @@ struct LLMitsApplication: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     let model = AppModel()
+    let updates = UpdateModel()
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private var settingsWindowController: NSWindowController?
@@ -35,22 +36,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             object: nil
         )
         Task { await model.start() }
+        updates.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         model.stop()
+        updates.stop()
     }
 
     @objc private func didWake() {
         model.refreshAfterWake()
+        Task { await updates.checkForUpdates() }
     }
 
     private func configurePopover() {
         popover.behavior = .transient
         popover.delegate = self
         popover.contentSize = NSSize(width: 380, height: 420)
-        popover.contentViewController = NSHostingController(rootView: PopoverView(model: model))
+        popover.contentViewController = NSHostingController(rootView: PopoverView(
+            model: model,
+            updates: updates,
+            onRequestUpdate: { [weak self] update in self?.confirmUpdate(update) }
+        ))
+    }
+
+    private func confirmUpdate(_ update: AvailableUpdate) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.updates.availableUpdate?.version == update.version else { return }
+            self.popover.close()
+            NSApp.activate(ignoringOtherApps: true)
+
+            let alert = NSAlert()
+            alert.messageText = "Install LLMits update?"
+            alert.informativeText = "LLMits \(update.version) will be downloaded and verified. The app will close and reopen when installation is ready."
+            alert.addButton(withTitle: "Update and Relaunch")
+            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: "Refresh quotas")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                self.updates.installAvailableUpdate()
+            case .alertThirdButtonReturn:
+                Task { await self.model.manualRefresh() }
+            default:
+                break
+            }
+        }
     }
 
     func popoverDidShow(_ notification: Notification) {

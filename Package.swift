@@ -19,5 +19,6 @@ let package = Package(
             resources: [.process("Resources")]
         ),
         .testTarget(name: "LLMitsCoreTests", dependencies: ["LLMitsCore"]),
+        .testTarget(name: "LLMitsAppTests", dependencies: ["LLMitsApp", "LLMitsCore"]),
     ]
 )

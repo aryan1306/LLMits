@@ -3,19 +3,35 @@ import LLMitsCore
 
 struct PopoverView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject var updates: UpdateModel
+    let onRequestUpdate: (AvailableUpdate) -> Void
 
     var body: some View {
         VStack(spacing: 12) {
             HStack {
                 Text("LLMits").font(.headline)
                 Spacer()
-                if model.isRefreshing { ProgressView().controlSize(.small) }
-                Button { Task { await model.manualRefresh() } } label: {
-                    Image(systemName: "arrow.clockwise")
+                if updates.isInstalling || model.isRefreshing {
+                    ProgressView().controlSize(.small)
                 }
-                .buttonStyle(.plain)
-                .disabled(model.isRefreshing)
-                .help("Refresh quotas")
+                if let update = updates.availableUpdate {
+                    Button { onRequestUpdate(update) } label: {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .foregroundStyle(.orange)
+                            .frame(width: 18, height: 18)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(updates.isInstalling)
+                    .help("LLMits \(update.version) is available")
+                } else {
+                    Button { Task { await model.manualRefresh() } } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .frame(width: 18, height: 18)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.isRefreshing)
+                    .help("Refresh quotas")
+                }
             }
 
             if model.connectedSnapshots.isEmpty {
@@ -41,6 +57,9 @@ struct PopoverView: View {
 
             if let error = model.errorMessage {
                 Text(error).font(.caption).foregroundStyle(.secondary)
+            }
+            if let error = updates.errorMessage {
+                Text(error).font(.caption).foregroundStyle(.red)
             }
 
             Divider()

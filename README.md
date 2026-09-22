@@ -33,6 +33,7 @@ LLMits is an open-source macOS menu-bar utility for viewing quota utilization fr
 - Automatic token refresh, configurable polling, and refresh after wake
 - Relative freshness labels, reset times, stale-data indicators, and manual refresh
 - Local snapshot cache so the latest usage remains visible between launches
+- Automatic GitHub release checks with an in-app, user-approved update and relaunch
 - No backend, analytics, telemetry, or account-identity data in cached snapshots
 
 ## Run locally
@@ -88,6 +89,8 @@ You can also download `LLMits.dmg` from the [latest release](https://github.com/
 
 Release builds are currently ad-hoc signed. On first launch, macOS may require you to right-click LLMits and choose **Open**. A future Developer ID-signed and notarized release will remove this extra confirmation.
 
+Packaged apps check GitHub for a newer published release at launch, every six hours, and after wake. When an update is available, the popover's refresh control becomes a small download icon. Click it for **Update and Relaunch**, **Refresh quotas**, or **Cancel**. After confirmation, LLMits downloads and verifies the release, replaces the app in its current location, then relaunches. Updating requires write access to the app's containing folder. Development builds started with `swift run` do not self-update.
+
 ## How it works
 
 - AppKit owns the status item and transient popover; SwiftUI renders the popover and settings UI.
@@ -120,11 +123,19 @@ Create a universal app and DMG locally:
 
 Artifacts are written to `dist/`. GitHub Actions runs CI on pushes and pull requests. A manual **Build DMG** workflow run uploads the DMG as a workflow artifact; pushing a tag such as `v0.1.0` also creates a GitHub Release with the DMG and SHA-256 checksum.
 
-The test suite covers authorization primitives, credential storage, provider response parsing, quota calculations, persistence, diagnostics, and refresh policy.
+The test suite covers authorization primitives, credential storage, provider response parsing, quota calculations, persistence, diagnostics, refresh policy, and update detection. The live updater integration test is skipped by default. To run it against the latest GitHub release, build an older packaged version in a temporary directory and run:
+
+```sh
+TEST_DIST=$(mktemp -d)
+DIST_DIR="$TEST_DIST" ./scripts/build-dmg.sh 0.1.0
+LLMITS_UPDATE_TEST_CURRENT_APP="$TEST_DIST/LLMits.app" swift test --filter UpdateIntegrationTests
+```
+
+The test copies that app into another temporary directory, then checks download, verification, waiting for the old process, replacement, relaunch, and rollback. It does not modify the app installed in Applications.
 
 ## Privacy
 
-LLMits has no backend, analytics, telemetry, or crash-reporting service. OAuth credentials are stored in macOS Keychain. Cached quota snapshots are written locally and contain neither credentials nor account identity.
+LLMits has no backend, analytics, telemetry, or crash-reporting service. Packaged apps contact GitHub to check for releases and download an update only after approval. OAuth credentials are stored in macOS Keychain. Cached quota snapshots are written locally and contain neither credentials nor account identity.
 
 ## License
 

@@ -6,50 +6,67 @@ struct SettingsView: View {
     @State private var claudeCallback = ""
 
     var body: some View {
-        Form {
-            Section("Connections") {
-                ForEach($model.connections) { $connection in
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(connection.provider.displayName).font(.headline)
-                                Text(connection.isConnected ? "Connected with LLMits login" : connection.provider == .claude ? "Connect your Claude subscription" : "Connect your ChatGPT subscription")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            Form {
+                Section("Connections") {
+                    ForEach($model.connections) { $connection in
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(connection.provider.displayName).font(.headline)
+                                    Text(connection.isConnected ? "Connected with LLMits login" : connection.provider == .claude ? "Connect your Claude subscription" : "Connect your ChatGPT subscription")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button(connection.isConnected ? "Disconnect" : "Connect") {
+                                    if connection.isConnected { model.disconnect(connection.provider) }
+                                    else { model.connect(connection.provider) }
+                                }
+                                .disabled(model.authorization != nil && model.authorization?.provider != connection.provider)
                             }
-                            Spacer()
-                            Button(connection.isConnected ? "Disconnect" : "Connect") {
-                                if connection.isConnected { model.disconnect(connection.provider) }
-                                else { model.connect(connection.provider) }
-                            }
-                            .disabled(model.authorization != nil && model.authorization?.provider != connection.provider)
-                        }
 
-                        if let authorization = model.authorization, authorization.provider == connection.provider {
-                            authorizationView(authorization)
+                            if let authorization = model.authorization, authorization.provider == connection.provider {
+                                authorizationView(authorization)
+                            }
                         }
                     }
                 }
-            }
 
-            Section("Display") {
-                Picker("Quota display", selection: $model.preferences.displayMode) {
-                    Text("Used").tag(DisplayMode.used)
-                    Text("Remaining").tag(DisplayMode.remaining)
+                Section("Display") {
+                    Picker("Quota display", selection: $model.preferences.displayMode) {
+                        Text("Used").tag(DisplayMode.used)
+                        Text("Remaining").tag(DisplayMode.remaining)
+                    }
+                    Picker("Polling interval", selection: $model.preferences.pollingMinutes) {
+                        ForEach([5, 15, 30, 60], id: \.self) { Text("\($0) minutes").tag($0) }
+                    }
+                    Toggle("Show account identity", isOn: $model.preferences.showAccountIdentity)
                 }
-                Picker("Polling interval", selection: $model.preferences.pollingMinutes) {
-                    ForEach([5, 15, 30, 60], id: \.self) { Text("\($0) minutes").tag($0) }
-                }
-                Toggle("Show account identity", isOn: $model.preferences.showAccountIdentity)
-            }
 
-            Section("Privacy") {
-                Text("LLMits is local-only. Provider integrations are unofficial and may change without notice. No analytics, telemetry, or LLMits backend is used.")
+                Section("Privacy") {
+                    Text("Credentials and usage data stay local. LLMits checks GitHub for new releases; downloads require your approval. Provider integrations are unofficial and may change without notice. No analytics, telemetry, or LLMits backend is used.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .formStyle(.grouped)
+            .padding(.horizontal)
+            .padding(.top)
+
+            Divider()
+            HStack(spacing: 8) {
+                Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development")")
                     .foregroundStyle(.secondary)
+                Spacer()
+                Link("LLMits", destination: URL(string: "https://github.com/aryan1306/LLMits")!)
+                Text("·").foregroundStyle(.tertiary)
+                Text("Brewed by").foregroundStyle(.secondary)
+                Link("aryan1306", destination: URL(string: "https://github.com/aryan1306")!)
             }
+            .font(.caption)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
         }
-        .formStyle(.grouped)
-        .padding()
     }
 
     @ViewBuilder
