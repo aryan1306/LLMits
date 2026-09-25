@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import Foundation
 import LLMitsCore
+import Security
 
 enum UpdateInstallError: LocalizedError {
     case requiresAppBundle
@@ -9,6 +10,7 @@ enum UpdateInstallError: LocalizedError {
     case invalidDownload
     case invalidChecksum
     case invalidApp
+    case untrustedSignature
     case commandFailed(String)
 
     var errorDescription: String? {
@@ -18,6 +20,7 @@ enum UpdateInstallError: LocalizedError {
         case .invalidDownload: "The update download failed. Please try again."
         case .invalidChecksum: "The update download did not match its published checksum."
         case .invalidApp: "The downloaded app could not be verified."
+        case .untrustedSignature: "The update was not signed by the LLMits release certificate."
         case let .commandFailed(command): "The update could not complete: \(command)."
         }
     }
@@ -74,6 +77,10 @@ enum UpdateInstaller {
             guard FileManager.default.fileExists(atPath: mountedApp.path) else { throw UpdateInstallError.invalidApp }
             try await run("/usr/bin/ditto", [mountedApp.path, stagedApp.path])
             try await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", stagedApp.path])
+            if let requirement = designatedRequirement(of: currentApp).flatMap(pinnedRequirement(forDesignated:)),
+               !satisfies(stagedApp, requirement: requirement) {
+                throw UpdateInstallError.untrustedSignature
+            }
             guard let bundle = Bundle(url: stagedApp),
                   bundle.bundleIdentifier == "com.llmits.app",
                   let version = bundle.infoDictionary?["CFBundleShortVersionString"] as? String,
@@ -94,6 +101,34 @@ enum UpdateInstaller {
         try FileManager.default.copyItem(at: helperResource, to: helper)
         keepScratch = true
         return PreparedUpdate(stagedApp: stagedApp, targetApp: currentApp, helper: helper)
+    }
+
+    /// A certificate-signed app only accepts updates from the same certificate. Ad-hoc builds are pinned to
+    /// their own code hash, which no update can match, so they keep the basic signature check.
+    /// Moving to a new certificate (for example, Developer ID) needs one bridge release, signed with the
+    /// current certificate, whose accepted requirement also allows the new one.
+    static func pinnedRequirement(forDesignated requirement: String) -> String? {
+        requirement.contains("certificate") ? requirement : nil
+    }
+
+    static func designatedRequirement(of url: URL) -> String? {
+        var code: SecStaticCode?
+        var requirement: SecRequirement?
+        var text: CFString?
+        guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code,
+              SecCodeCopyDesignatedRequirement(code, [], &requirement) == errSecSuccess, let requirement,
+              SecRequirementCopyString(requirement, [], &text) == errSecSuccess else { return nil }
+        return text as String?
+    }
+
+    static func satisfies(_ url: URL, requirement text: String) -> Bool {
+        var code: SecStaticCode?
+        var requirement: SecRequirement?
+        guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code,
+              SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess, let requirement else {
+            return false
+        }
+        return SecStaticCodeCheckValidity(code, [], requirement) == errSecSuccess
     }
 
     private static func expectedChecksum(in text: String) -> String? {
