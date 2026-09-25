@@ -39,7 +39,17 @@ jobs:
           fi
 
       - name: Build DMG
-        run: ./scripts/build-dmg.sh "${{ steps.version.outputs.value }}"
+        env:
+          CODESIGN_P12_BASE64: ${{ secrets.CODESIGN_P12_BASE64 }}
+          CODESIGN_P12_PASSWORD: ${{ secrets.CODESIGN_P12_PASSWORD }}
+          IS_TAG_RELEASE: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          # Releases must keep the same signing identity, or users lose Keychain trust on update.
+          if [[ "$IS_TAG_RELEASE" == "true" ]]; then
+            : "${CODESIGN_P12_BASE64:?Set the CODESIGN_P12_BASE64 repository secret}"
+            : "${CODESIGN_P12_PASSWORD:?Set the CODESIGN_P12_PASSWORD repository secret}"
+          fi
+          ./scripts/build-dmg.sh "${{ steps.version.outputs.value }}"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4

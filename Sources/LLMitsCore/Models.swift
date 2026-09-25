@@ -117,7 +117,6 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         didSet { providerOrder = Self.normalizedOrder(providerOrder) }
     }
     public var antigravityPool: AntigravityPool
-    public var allowAntigravityKeychainFallback: Bool
 
     public init(
         displayMode: DisplayMode = .used,
@@ -125,8 +124,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         showAccountIdentity: Bool = false,
         menuBarProviders: [ProviderID] = [.claude, .codex],
         providerOrder: [ProviderID] = ProviderID.allCases,
-        antigravityPool: AntigravityPool = .gemini,
-        allowAntigravityKeychainFallback: Bool = true
+        antigravityPool: AntigravityPool = .gemini
     ) {
         self.displayMode = displayMode
         self.pollingMinutes = pollingMinutes
@@ -134,11 +132,10 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         self.menuBarProviders = Array(menuBarProviders.uniqued().prefix(3))
         self.providerOrder = Self.normalizedOrder(providerOrder)
         self.antigravityPool = antigravityPool
-        self.allowAntigravityKeychainFallback = allowAntigravityKeychainFallback
     }
 
     private enum CodingKeys: String, CodingKey {
-        case displayMode, pollingMinutes, showAccountIdentity, menuBarProviders, providerOrder, antigravityPool, allowAntigravityKeychainFallback
+        case displayMode, pollingMinutes, showAccountIdentity, menuBarProviders, providerOrder, antigravityPool
     }
 
     public init(from decoder: Decoder) throws {
@@ -155,7 +152,6 @@ public struct AppPreferences: Codable, Equatable, Sendable {
             try values.decodeIfPresent([ProviderID].self, forKey: .providerOrder) ?? menuBarProviders
         )
         antigravityPool = try values.decodeIfPresent(AntigravityPool.self, forKey: .antigravityPool) ?? .gemini
-        allowAntigravityKeychainFallback = try values.decodeIfPresent(Bool.self, forKey: .allowAntigravityKeychainFallback) ?? true
     }
 
     private static func normalizedOrder(_ order: [ProviderID]) -> [ProviderID] {

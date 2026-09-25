@@ -9,7 +9,7 @@
 - `swift build`: compile a development build.
 - `swift test`: run the XCTest suite before submitting changes.
 - `swift run LLMits`: launch the menu-bar app locally (it has no Dock icon).
-- `./scripts/build-dmg.sh 1.0.1`: create a universal `.app`, DMG, and SHA-256 file under `dist/`.
+- `./scripts/build-dmg.sh 1.0.1`: create a universal `.app`, DMG, and SHA-256 file under `dist/`. Set `CODESIGN_P12_PATH` (or `CODESIGN_P12_BASE64`) and `CODESIGN_P12_PASSWORD` to sign with the stable release certificate; otherwise it is ad-hoc signed.
 
 Use Xcode 16+ and macOS 14+. Local `swift run` builds are ad-hoc signed, so macOS may ask for Keychain access after rebuilding.
 
