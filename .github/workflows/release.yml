@@ -46,8 +46,12 @@ jobs:
         run: |
           # Releases must keep the same signing identity, or users lose Keychain trust on update.
           if [[ "$IS_TAG_RELEASE" == "true" ]]; then
-            : "${CODESIGN_P12_BASE64:?Set the CODESIGN_P12_BASE64 repository secret}"
-            : "${CODESIGN_P12_PASSWORD:?Set the CODESIGN_P12_PASSWORD repository secret}"
+            for name in CODESIGN_P12_BASE64 CODESIGN_P12_PASSWORD; do
+              if [[ -z "${!name:-}" ]]; then
+                echo "::error::Add the $name repository secret before tagging a release"
+                exit 1
+              fi
+            done
           fi
           ./scripts/build-dmg.sh "${{ steps.version.outputs.value }}"
 
@@ -72,6 +76,8 @@ jobs:
           fi
 
       - name: Mirror release to Cloudflare R2
+        # Manual runs only produce a workflow artifact; publishing would move latest/version.txt.
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}

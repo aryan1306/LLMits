@@ -37,7 +37,10 @@ SIGNING_ARGS=()
 if [[ -n "${CODESIGN_P12_BASE64:-}" || -n "${CODESIGN_P12_PATH:-}" ]]; then
     # Import the stable signing identity into a throwaway keychain so every release keeps the same
     # designated requirement and macOS Keychain trust survives updates.
-    : "${CODESIGN_P12_PASSWORD:?Set CODESIGN_P12_PASSWORD for the signing certificate}"
+    if [[ -z "${CODESIGN_P12_PASSWORD:-}" ]]; then
+        echo "error: the signing certificate needs its passphrase in CODESIGN_P12_PASSWORD" >&2
+        exit 1
+    fi
     SIGNING_DIR="$(mktemp -d)"
     SIGNING_KEYCHAIN="$SIGNING_DIR/signing.keychain-db"
     SIGNING_KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
