@@ -103,7 +103,7 @@ curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh | 
 
 You can also download `LLMits.dmg` from the [latest release](https://github.com/aryan1306/LLMits/releases/latest), open it, and drag LLMits into Applications.
 
-Release builds are currently ad-hoc signed. On first launch, macOS may require you to right-click LLMits and choose **Open**. A future Developer ID-signed and notarized release will remove this extra confirmation.
+Release builds are signed with a self-signed LLMits certificate, which keeps Keychain access approved across updates. The certificate is not issued by Apple, so on first launch macOS may require you to right-click LLMits and choose **Open**. A future Developer ID-signed and notarized release will remove this extra confirmation.
 
 Packaged apps check GitHub for a newer published release at launch, every six hours, and after wake. When an update is available, the popover's refresh control becomes a small download icon. Click it for **Update and Relaunch**, **Refresh quotas**, or **Cancel**. To check right away, choose **Check Now** under **Settings → Updates**; manual checks are limited to one per minute and pause while GitHub's API rate limit is in effect. After confirmation, LLMits downloads and verifies the release, replaces the app in its current location, then relaunches. Updating requires write access to the app's containing folder. Development builds started with `swift run` do not self-update.
 
@@ -137,6 +137,14 @@ Create a universal app and DMG locally:
 ```sh
 ./scripts/build-dmg.sh 0.1.0
 ```
+
+Without signing variables the app is ad-hoc signed. To sign with the release certificate, pass a PKCS#12 identity:
+
+```sh
+CODESIGN_P12_PATH=path/to/llmits-codesign.p12 CODESIGN_P12_PASSWORD=… ./scripts/build-dmg.sh 0.1.0
+```
+
+The script imports the identity into a temporary keychain, signs, and removes it. Tagged releases require the `CODESIGN_P12_BASE64` and `CODESIGN_P12_PASSWORD` repository secrets. Keep the certificate unchanged: a new certificate changes the app's identity and makes every user approve Keychain access again.
 
 Artifacts are written to `dist/`. GitHub Actions runs CI on pushes and pull requests. A manual **Build DMG** workflow run uploads the DMG as a workflow artifact; pushing a tag such as `v0.1.0` also creates a GitHub Release with the DMG and SHA-256 checksum.
 

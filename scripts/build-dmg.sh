@@ -33,8 +33,47 @@ ditto "$PROJECT_ROOT/packaging/Info.plist" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_PATH/Contents/Info.plist"
 
-codesign --force --deep --options runtime --sign "$CODESIGN_IDENTITY" "$APP_PATH"
+SIGNING_ARGS=()
+if [[ -n "${CODESIGN_P12_BASE64:-}" || -n "${CODESIGN_P12_PATH:-}" ]]; then
+    # Import the stable signing identity into a throwaway keychain so every release keeps the same
+    # designated requirement and macOS Keychain trust survives updates.
+    : "${CODESIGN_P12_PASSWORD:?Set CODESIGN_P12_PASSWORD for the signing certificate}"
+    SIGNING_DIR="$(mktemp -d)"
+    SIGNING_KEYCHAIN="$SIGNING_DIR/signing.keychain-db"
+    SIGNING_KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+    ORIGINAL_KEYCHAINS=()
+    while IFS= read -r keychain; do
+        keychain="${keychain#"${keychain%%[![:space:]]*}"}"
+        ORIGINAL_KEYCHAINS+=("${keychain//\"/}")
+    done < <(security list-keychains -d user)
+    cleanup_signing() {
+        security list-keychains -d user -s "${ORIGINAL_KEYCHAINS[@]}"
+        security delete-keychain "$SIGNING_KEYCHAIN" >/dev/null 2>&1 || true
+        rm -rf "$SIGNING_DIR"
+    }
+    trap cleanup_signing EXIT
+
+    P12_PATH="${CODESIGN_P12_PATH:-$SIGNING_DIR/identity.p12}"
+    if [[ -z "${CODESIGN_P12_PATH:-}" ]]; then
+        printf '%s' "$CODESIGN_P12_BASE64" | base64 --decode > "$P12_PATH"
+    fi
+    security create-keychain -p "$SIGNING_KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN"
+    security set-keychain-settings -lut 3600 "$SIGNING_KEYCHAIN"
+    security unlock-keychain -p "$SIGNING_KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN"
+    security import "$P12_PATH" -k "$SIGNING_KEYCHAIN" -P "$CODESIGN_P12_PASSWORD" -T /usr/bin/codesign >/dev/null
+    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$SIGNING_KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN" >/dev/null
+    security list-keychains -d user -s "$SIGNING_KEYCHAIN" "${ORIGINAL_KEYCHAINS[@]}"
+    # Self-signed identities are not trusted for policy checks, so select the identity by hash.
+    CODESIGN_IDENTITY="$(security find-identity -p codesigning "$SIGNING_KEYCHAIN" | awk '/\)/ { print $2; exit }')"
+    [[ -n "$CODESIGN_IDENTITY" ]] || { echo "error: no signing identity found in the certificate" >&2; exit 1; }
+    SIGNING_ARGS=(--keychain "$SIGNING_KEYCHAIN")
+elif [[ "$CODESIGN_IDENTITY" == "-" ]]; then
+    echo "warning: ad-hoc signing; Keychain access will be re-requested after every update" >&2
+fi
+
+codesign --force --deep --options runtime --timestamp=none ${SIGNING_ARGS[@]+"${SIGNING_ARGS[@]}"} --sign "$CODESIGN_IDENTITY" "$APP_PATH"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+codesign --display --requirements - "$APP_PATH" 2>&1 | grep '^designated'
 
 ditto "$APP_PATH" "$STAGING_DIR/LLMits.app"
 ln -s /Applications "$STAGING_DIR/Applications"
