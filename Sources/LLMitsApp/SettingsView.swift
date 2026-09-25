@@ -333,8 +333,8 @@ struct SettingsView: View {
                     Spacer()
                     progress("Waiting for approval…")
                 }
-            case .antigravityBrowser:
-                progress("Finish Google sign-in in your browser…")
+            case .antigravityCLI:
+                progress("Checking your agy CLI login…")
             case .exchanging:
                 progress("Completing sign-in…")
             case let .failed(message):
@@ -342,13 +342,8 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
-                    Button("Try Again") { model.connect(authorization.provider) }
-                    if authorization.provider == .antigravity {
-                        Button("Use agy CLI Login") { model.connectUsingExistingAntigravityLogin() }
-                    }
-                }
-                .controlSize(.small)
+                Button("Try Again") { model.connect(authorization.provider) }
+                    .controlSize(.small)
             }
         }
         .padding(.vertical, 10)

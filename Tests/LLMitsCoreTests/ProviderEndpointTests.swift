@@ -120,50 +120,6 @@ final class ProviderEndpointTests: XCTestCase {
         }
     }
 
-    func testAntigravityProviderAcceptsObjectProjectID() async throws {
-        let credentials = InMemoryCredentialStore()
-        await credentials.save(OAuthCredential(accessToken: "access"), for: .antigravity)
-        let transport = RecordingTransport(responses: [
-            HTTPResponse(data: Data(#"{"cloudaicompanionProject":{"id":"project-2"}}"#.utf8), statusCode: 200),
-            HTTPResponse(data: Data(), statusCode: 404),
-            HTTPResponse(data: Data(#"{"models":{"gemini-pro":{"quotaInfo":{"remainingFraction":0.45}}}}"#.utf8), statusCode: 200),
-        ])
-        _ = try await AntigravityUsageProvider(credentials: credentials, transport: transport).fetchUsage()
-        let requests = await transport.recordedRequests()
-        XCTAssertEqual(try jsonBody(requests[2])["project"] as? String, "project-2")
-    }
-
-    func testAntigravityProviderUsesSummaryAndKeepsBothPools() async throws {
-        let credentials = InMemoryCredentialStore()
-        await credentials.save(OAuthCredential(accessToken: "access"), for: .antigravity)
-        let transport = RecordingTransport(responses: [
-            HTTPResponse(data: Data(#"{"cloudaicompanionProject":"project-1","currentTier":{"name":"Pro"}}"#.utf8), statusCode: 200),
-            HTTPResponse(data: Data(#"{"groups":[{"displayName":"Gemini","buckets":[{"displayName":"Five hour","remainingFraction":0.75}]},{"displayName":"Claude & GPT","buckets":[{"displayName":"Weekly","remainingFraction":0.5}]}]}"#.utf8), statusCode: 200),
-        ])
-        let snapshot = try await AntigravityUsageProvider(credentials: credentials, transport: transport).fetchUsage()
-        XCTAssertEqual(snapshot.plan, "Pro")
-        XCTAssertEqual(snapshot.windows.map(\.id), ["gemini-five-hour", "claude-gpt-weekly"])
-        let requests = await transport.recordedRequests()
-        XCTAssertEqual(requests.map(\.url), [ProviderEndpoints.Antigravity.loadCodeAssist, ProviderEndpoints.Antigravity.quotaSummary])
-        XCTAssertEqual(try jsonBody(requests[1])["project"] as? String, "project-1")
-    }
-
-    func testAntigravityProviderFallsBackToProjectScopedModels() async throws {
-        let credentials = InMemoryCredentialStore()
-        await credentials.save(OAuthCredential(accessToken: "access"), for: .antigravity)
-        let transport = RecordingTransport(responses: [
-            HTTPResponse(data: Data(#"{"cloudaicompanionProject":"project-1"}"#.utf8), statusCode: 200),
-            HTTPResponse(data: Data(), statusCode: 404),
-            HTTPResponse(data: Data(#"{"models":{"gemini-pro":{"quotaInfo":{"remainingFraction":0.45}},"claude-sonnet":{"quotaInfo":{"remainingFraction":0.8}}}}"#.utf8), statusCode: 200),
-        ])
-        let snapshot = try await AntigravityUsageProvider(credentials: credentials, transport: transport).fetchUsage()
-        XCTAssertEqual(Set(snapshot.windows.map(\.id)), Set(["gemini-five-hour", "claude-gpt-five-hour"]))
-        let requests = await transport.recordedRequests()
-        XCTAssertEqual(requests.last?.url, ProviderEndpoints.Antigravity.availableModels)
-        XCTAssertEqual(try jsonBody(requests[2])["project"] as? String, "project-1")
-        XCTAssertNil(try jsonBody(requests[2])["metadata"])
-    }
-
     func testTokenExchangeDecodesCredentialAndExpiry() async throws {
         let now = Date(timeIntervalSince1970: 1_000)
         let response = HTTPResponse(

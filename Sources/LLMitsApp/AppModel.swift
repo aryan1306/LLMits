@@ -7,7 +7,7 @@ enum AuthorizationPhase: Equatable {
     case starting
     case claudeCallback
     case codexCode(String)
-    case antigravityBrowser
+    case antigravityCLI
     case exchanging
     case failed(String)
 }
@@ -41,30 +41,38 @@ final class AppModel: ObservableObject {
     private let snapshotStore: any SnapshotPersisting
     private let credentialStore: any CredentialStoring
     private let providers: [ProviderID: any UsageProviding]
-    private let antigravityCLIProvider: any UsageProviding
     private var lastManualRefresh: Date?
-    private var cliRefreshError: String?
+    /// Failures that need the user (agy sign-in, a denied Keychain prompt). Polling skips these providers
+    /// so it doesn't re-run agy or re-prompt; a manual refresh or reconnect retries them.
+    private var blockedRefreshErrors: [ProviderID: String] = [:]
     private var pollingTask: Task<Void, Never>?
     private var authorizationTask: Task<Void, Never>?
     private var claudeTransaction: PKCETransaction?
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        snapshotStore: (any SnapshotPersisting)? = nil,
+        credentialStore: (any CredentialStoring)? = nil,
+        antigravityProvider: (any UsageProviding)? = nil
+    ) {
         self.defaults = defaults
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("LLMits", isDirectory: true)
-        snapshotStore = FileSnapshotStore(fileURL: support.appendingPathComponent("latest-usage.json"))
-        let credentials = KeychainCredentialStore()
-        credentialStore = credentials
+        self.snapshotStore = snapshotStore ?? FileSnapshotStore(fileURL: support.appendingPathComponent("latest-usage.json"))
+        let credentials = credentialStore ?? KeychainCredentialStore()
+        self.credentialStore = credentials
         providers = [
             .claude: RefreshingUsageProvider(id: .claude, credentials: credentials),
             .codex: RefreshingUsageProvider(id: .codex, credentials: credentials),
-            .antigravity: AntigravityUsageProvider(credentials: credentials),
+            .antigravity: antigravityProvider ?? AntigravityCLIUsageProvider(),
         ]
-        antigravityCLIProvider = AntigravityCLIUsageProvider()
         preferences = Self.decode(AppPreferences.self, key: "preferences", defaults: defaults) ?? AppPreferences()
         let savedConnections = Self.decode([ProviderConnection].self, key: "connections", defaults: defaults) ?? []
         connections = ProviderID.allCases.map { provider in
-            savedConnections.first(where: { $0.provider == provider }) ?? ProviderConnection(provider: provider)
+            var connection = savedConnections.first(where: { $0.provider == provider }) ?? ProviderConnection(provider: provider)
+            // Antigravity is read only through the agy CLI; earlier Google sign-ins carry over to it.
+            if provider == .antigravity { connection.source = .cli }
+            return connection
         }
     }
 
@@ -93,17 +101,10 @@ final class AppModel: ObservableObject {
         connectedProviders.compactMap { provider in snapshots.first { $0.provider == provider } }
     }
 
+    /// Launch trusts the saved connection list instead of probing the Keychain, so a new user sees no
+    /// access prompts until they connect a provider.
     func start() async {
         snapshots = (try? await snapshotStore.load()) ?? []
-        for provider in ProviderID.allCases {
-            let hasCredential = (try? await credentialStore.credential(for: provider)) != nil
-            if provider == .antigravity, !hasCredential, preferences.allowAntigravityKeychainFallback,
-               (try? AntigravityCredentialReader.credential()) != nil {
-                updateConnection(provider, connected: true, source: .cli)
-            } else {
-                updateConnection(provider, connected: hasCredential, source: .llmits)
-            }
-        }
         ensureMenuBarSelection()
         onStatusChange?()
         if connections.contains(where: \.isConnected) { await refresh() }
@@ -118,7 +119,7 @@ final class AppModel: ObservableObject {
     func manualRefresh() async {
         guard lastManualRefresh.map({ Date().timeIntervalSince($0) >= 2 }) ?? true else { return }
         lastManualRefresh = Date()
-        cliRefreshError = nil
+        blockedRefreshErrors.removeAll()
         await refresh()
     }
 
@@ -131,22 +132,22 @@ final class AppModel: ObservableObject {
         var updated = snapshots
         var failures: [String] = []
         for connection in connections where connection.isConnected {
-            if connection.provider == .antigravity, connection.source == .cli,
-               let cliRefreshError {
-                failures.append("Antigravity: \(cliRefreshError)")
+            if let blocked = blockedRefreshErrors[connection.provider] {
+                failures.append("\(connection.provider.displayName): \(blocked)")
                 continue
             }
-            let provider: (any UsageProviding)? = connection.provider == .antigravity && connection.source == .cli
-                ? antigravityCLIProvider : providers[connection.provider]
-            guard let provider else { continue }
+            guard let provider = providers[connection.provider] else { continue }
             do {
                 let snapshot = try await provider.fetchUsage()
                 updated.removeAll { $0.provider == snapshot.provider }
                 updated.append(snapshot)
+            } catch ProviderError.notConnected {
+                // The saved connection outlived its credential, e.g. the Keychain item was removed.
+                updateConnection(connection.provider, connected: false)
+                updated.removeAll { $0.provider == connection.provider }
             } catch {
-                if connection.provider == .antigravity, connection.source == .cli,
-                   error is AntigravityCLIError {
-                    cliRefreshError = error.localizedDescription
+                if error is AntigravityCLIError || error is CredentialStoreError {
+                    blockedRefreshErrors[connection.provider] = error.localizedDescription
                 }
                 failures.append("\(connection.provider.displayName): \(error.localizedDescription)")
             }
@@ -176,7 +177,7 @@ final class AppModel: ObservableObject {
                 switch provider {
                 case .claude: try self.beginClaudeAuthorization()
                 case .codex: try await self.runCodexAuthorization()
-                case .antigravity: try await self.runAntigravityAuthorization()
+                case .antigravity: try await self.connectAntigravityCLI()
                 }
             } catch is CancellationError {
                 self.authorization = nil
@@ -222,35 +223,14 @@ final class AppModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
-                if provider == .antigravity, connections.first(where: { $0.provider == provider })?.source == .cli {
-                    preferences.allowAntigravityKeychainFallback = false
-                }
-                try await credentialStore.deleteCredential(for: provider)
+                if provider != .antigravity { try await credentialStore.deleteCredential(for: provider) }
                 updateConnection(provider, connected: false)
-                if provider == .antigravity { cliRefreshError = nil }
+                blockedRefreshErrors[provider] = nil
                 snapshots.removeAll { $0.provider == provider }
                 ensureMenuBarSelection()
                 onStatusChange?()
             } catch {
                 errorMessage = error.localizedDescription
-            }
-        }
-    }
-
-    func connectUsingExistingAntigravityLogin() {
-        authorizationTask?.cancel()
-        authorizationTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                guard try AntigravityCredentialReader.credential() != nil else { throw ProviderError.notConnected }
-                preferences.allowAntigravityKeychainFallback = true
-                updateConnection(.antigravity, connected: true, source: .cli)
-                cliRefreshError = nil
-                authorization = nil
-                ensureMenuBarSelection()
-                await refresh()
-            } catch {
-                authorization = AuthorizationPresentation(provider: .antigravity, phase: .failed(error.localizedDescription))
             }
         }
     }
@@ -349,51 +329,26 @@ final class AppModel: ObservableObject {
         throw AuthorizationError.expiredDeviceCode
     }
 
-    private func runAntigravityAuthorization() async throws {
-        let config = try AntigravityOAuthConfig.discover()
-        let transaction = try PKCETransaction.generate()
-        let server = try LoopbackOAuthServer(state: transaction.state)
-        defer { server.cancel() }
-        let redirectURI = try await server.start()
+    /// Verifies the agy login by running its quota report; LLMits never reads agy's credentials itself.
+    private func connectAntigravityCLI() async throws {
+        authorization = AuthorizationPresentation(provider: .antigravity, phase: .antigravityCLI)
+        guard let provider = providers[.antigravity] else { return }
+        let snapshot = try await provider.fetchUsage()
         try Task.checkCancellation()
-        let authorizationURL = try OAuthAuthorizationConfiguration(
-            authorizationEndpoint: ProviderEndpoints.Antigravity.authorization,
-            clientID: config.clientID,
-            redirectURI: redirectURI,
-            scopes: ProviderEndpoints.Antigravity.scopes,
-            additionalParameters: ["access_type": "offline", "prompt": "consent select_account"]
-        ).authorizationURL(for: transaction)
-        authorization = AuthorizationPresentation(provider: .antigravity, phase: .antigravityBrowser)
-        guard NSWorkspace.shared.open(authorizationURL) else { throw AuthorizationError.invalidAuthorizationURL }
-        let callback = try await server.callback()
-        try Task.checkCancellation()
-        try callback.validate(expectedState: transaction.state)
-        authorization = AuthorizationPresentation(provider: .antigravity, phase: .exchanging)
-        let exchanged = try await OAuthTokenClient().exchangeCode(
-            endpoint: ProviderEndpoints.Antigravity.token,
-            clientID: config.clientID,
-            code: callback.code,
-            verifier: transaction.verifier,
-            redirectURI: redirectURI,
-            additionalFields: ["client_secret": config.clientSecret]
-        )
-        let credential = OAuthCredential(
-            accessToken: exchanged.accessToken,
-            refreshToken: exchanged.refreshToken,
-            expiresAt: exchanged.expiresAt,
-            tokenType: exchanged.tokenType,
-            scopes: exchanged.scopes,
-            idToken: exchanged.idToken,
-            accountID: exchanged.accountID,
-            clientID: config.clientID,
-            clientSecret: config.clientSecret
-        )
-        try Task.checkCancellation()
-        try await finishConnection(credential, provider: .antigravity)
+        blockedRefreshErrors[.antigravity] = nil
+        snapshots.removeAll { $0.provider == .antigravity }
+        snapshots.append(snapshot)
+        snapshots.sort { $0.provider.rawValue < $1.provider.rawValue }
+        try? await snapshotStore.save(snapshots)
+        updateConnection(.antigravity, connected: true, source: .cli)
+        ensureMenuBarSelection()
+        authorization = nil
+        onStatusChange?()
     }
 
     private func finishConnection(_ credential: OAuthCredential, provider: ProviderID) async throws {
         try await credentialStore.save(credential, for: provider)
+        blockedRefreshErrors[provider] = nil
         updateConnection(provider, connected: true)
         ensureMenuBarSelection()
         authorization = nil

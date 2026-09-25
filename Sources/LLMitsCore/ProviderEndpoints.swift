@@ -22,20 +22,6 @@ public enum ProviderEndpoints {
         public static let usage = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
         public static let redirectURI = "https://auth.openai.com/deviceauth/callback"
     }
-
-    public enum Antigravity {
-        public static let authorization = URL(string: "https://accounts.google.com/o/oauth2/v2/auth")!
-        public static let token = URL(string: "https://oauth2.googleapis.com/token")!
-        public static let userInfo = URL(string: "https://www.googleapis.com/oauth2/v2/userinfo")!
-        public static let loadCodeAssist = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")!
-        public static let quotaSummary = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")!
-        public static let retrieveQuota = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota")!
-        public static let availableModels = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels")!
-        public static let scopes = [
-            "https://www.googleapis.com/auth/cloud-platform",
-            "https://www.googleapis.com/auth/userinfo.email",
-        ]
-    }
 }
 
 public struct HTTPResponse: Sendable {

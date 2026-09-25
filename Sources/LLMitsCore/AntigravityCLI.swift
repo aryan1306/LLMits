@@ -8,8 +8,8 @@ public enum AntigravityCLIError: LocalizedError, Sendable, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .notInstalled: "Antigravity CLI (agy) was not found. Install it or connect with Google in LLMits."
-        case .signInRequired: "The Antigravity CLI needs sign-in. Run agy in Terminal, sign in, then refresh LLMits."
+        case .notInstalled: "Antigravity CLI (agy) was not found. Install agy, sign in by running it in Terminal, then connect again."
+        case .signInRequired: "The Antigravity CLI needs sign-in. Run agy in Terminal, sign in, then try again."
         case .timedOut: "Antigravity CLI quota check timed out. Try again after opening agy."
         case .invalidReport: "Antigravity CLI did not return quota data. Update agy and try again."
         }
@@ -17,6 +17,7 @@ public enum AntigravityCLIError: LocalizedError, Sendable, Equatable {
 }
 
 /// Uses agy's read-only quota command, which exposes the full Gemini and Claude/GPT pools.
+/// agy reads its own login, so LLMits never touches Antigravity credentials or their Keychain item.
 public struct AntigravityCLIUsageProvider: UsageProviding {
     public let id: ProviderID = .antigravity
     private let executable: URL?

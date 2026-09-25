@@ -35,52 +35,6 @@ public struct OAuthCredential: Codable, Equatable, Sendable {
     }
 }
 
-public enum AntigravityCredentialReader {
-    /// Reads Antigravity/agy's Go-keyring entry without modifying it.
-    public static func credential() throws -> OAuthCredential? {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "gemini",
-            kSecAttrAccount as String: "antigravity",
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        query.removeAll()
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data,
-              var value = String(data: data, encoding: .utf8) else {
-            throw CredentialStoreError.keychain(status)
-        }
-        let prefix = "go-keyring-base64:"
-        if value.hasPrefix(prefix),
-           let decoded = Data(base64Encoded: String(value.dropFirst(prefix.count))),
-           let text = String(data: decoded, encoding: .utf8) {
-            value = text
-        }
-        guard let payload = value.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else {
-            return nil
-        }
-        let token = (object["token"] as? [String: Any]) ?? object
-        guard let access = token["access_token"] as? String else { return nil }
-        let expiry: Date? = (token["expiry"] as? String).flatMap { value in
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions.insert(.withFractionalSeconds)
-            if let date = formatter.date(from: value) { return date }
-            formatter.formatOptions.remove(.withFractionalSeconds)
-            return formatter.date(from: value)
-        }
-        return OAuthCredential(
-            accessToken: access,
-            refreshToken: token["refresh_token"] as? String,
-            expiresAt: expiry,
-            scopes: ["https://www.googleapis.com/auth/cloud-platform"]
-        )
-    }
-}
-
 public protocol CredentialStoring: Sendable {
     func credential(for provider: ProviderID) async throws -> OAuthCredential?
     func save(_ credential: OAuthCredential, for provider: ProviderID) async throws
@@ -101,31 +55,61 @@ public enum CredentialStoreError: LocalizedError, Sendable {
     }
 }
 
+/// Keeps every provider's credential in one Keychain item so macOS asks for access at most once.
+/// Nothing is read until a provider first needs its credential; the result is cached for the session.
 public actor KeychainCredentialStore: CredentialStoring {
+    private static let bundleAccount = "credentials"
+    private static let legacyProviders: [ProviderID] = [.claude, .codex]
+
     private let service: String
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private var cache: [String: OAuthCredential]?
 
     public init(service: String = "com.llmits.credentials") {
         self.service = service
     }
 
     public func credential(for provider: ProviderID) throws -> OAuthCredential? {
-        var query = baseQuery(for: provider)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess else { throw CredentialStoreError.keychain(status) }
-        guard let data = result as? Data else { throw CredentialStoreError.encodingFailed }
-        return try decoder.decode(OAuthCredential.self, from: data)
+        try loadCredentials()[provider.rawValue]
     }
 
     public func save(_ credential: OAuthCredential, for provider: ProviderID) throws {
-        let data = try encoder.encode(credential)
-        let query = baseQuery(for: provider)
+        var credentials = try loadCredentials()
+        credentials[provider.rawValue] = credential
+        try write(credentials)
+    }
+
+    public func deleteCredential(for provider: ProviderID) throws {
+        var credentials = try loadCredentials()
+        if credentials.removeValue(forKey: provider.rawValue) != nil { try write(credentials) }
+        try delete(account: provider.rawValue)
+    }
+
+    private func loadCredentials() throws -> [String: OAuthCredential] {
+        if let cache { return cache }
+        let credentials: [String: OAuthCredential]
+        if let data = try read(account: Self.bundleAccount) {
+            credentials = try decoder.decode([String: OAuthCredential].self, from: data)
+        } else {
+            // Earlier builds stored one item per provider. Old items stay until the provider is disconnected,
+            // because deleting another build's item can trigger its own Keychain prompt.
+            var migrated: [String: OAuthCredential] = [:]
+            for provider in Self.legacyProviders {
+                if let data = try read(account: provider.rawValue) {
+                    migrated[provider.rawValue] = try decoder.decode(OAuthCredential.self, from: data)
+                }
+            }
+            if !migrated.isEmpty { try write(migrated) }
+            credentials = migrated
+        }
+        cache = credentials
+        return credentials
+    }
+
+    private func write(_ credentials: [String: OAuthCredential]) throws {
+        let data = try encoder.encode(credentials)
+        let query = baseQuery(account: Self.bundleAccount)
         let update = [kSecValueData as String: data]
         let updateStatus = SecItemUpdate(query as CFDictionary, update as CFDictionary)
 
@@ -138,20 +122,34 @@ public actor KeychainCredentialStore: CredentialStoring {
         } else if updateStatus != errSecSuccess {
             throw CredentialStoreError.keychain(updateStatus)
         }
+        cache = credentials
     }
 
-    public func deleteCredential(for provider: ProviderID) throws {
-        let status = SecItemDelete(baseQuery(for: provider) as CFDictionary)
+    private func read(account: String) throws -> Data? {
+        var query = baseQuery(account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess else { throw CredentialStoreError.keychain(status) }
+        guard let data = result as? Data else { throw CredentialStoreError.encodingFailed }
+        return data
+    }
+
+    private func delete(account: String) throws {
+        let status = SecItemDelete(baseQuery(account: account) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw CredentialStoreError.keychain(status)
         }
     }
 
-    private func baseQuery(for provider: ProviderID) -> [String: Any] {
+    private func baseQuery(account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: provider.rawValue,
+            kSecAttrAccount as String: account,
         ]
     }
 }

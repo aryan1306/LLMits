@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh | 
 - Choose one to three connected providers for the menu bar; Claude and Codex are selected by default
 - Pin providers from the popover and drag to reorder them in Settings; the popover shows every connected provider
 - Used or remaining percentage display modes
-- Claude PKCE, ChatGPT device-code, and Google browser sign-in flows
+- Claude PKCE and ChatGPT device-code sign-in, plus read-only use of an existing `agy` CLI login
 - Credentials stored in macOS Keychain
 - Automatic token refresh, configurable polling, and refresh after wake
 - Relative freshness labels, reset times, stale-data indicators, and manual refresh
@@ -51,7 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/aryan1306/LLMits/main/install.sh | 
 | --- | --- | --- | --- |
 | **Claude** | Pro, Max (5× and 20×), Team, and Enterprise, detected from your account | Browser sign-in, then paste the authorization code | Five-hour and weekly windows |
 | **ChatGPT (Codex)** | ChatGPT plans that include Codex, labeled with the plan reported by the Codex usage endpoint (for example, Plus or Pro) | One-time device code in the browser | Five-hour and weekly windows, plus any additional limits the endpoint reports |
-| **Antigravity** | Google accounts with Antigravity access, labeled with the tier reported by Google | Google browser sign-in, or an existing `agy` CLI login | Gemini and Claude & GPT pools, each with five-hour and, when reported, weekly windows |
+| **Antigravity** | Google accounts with Antigravity access, labeled with the tier reported by `agy` | An existing `agy` CLI login | Gemini and Claude & GPT pools, each with five-hour and, when reported, weekly windows |
 
 Each connection tracks one account per service. Provider usage endpoints are unofficial, so available windows and plan labels can change without notice.
 
@@ -75,14 +75,14 @@ LLMits runs as a menu-bar accessory without a Dock icon. Click its menu-bar item
 
 - **Claude:** complete authorization in the browser, then paste the authorization code or full callback URL into LLMits.
 - **ChatGPT:** enter the one-time code on the page opened by LLMits and wait for approval.
-- **Antigravity:** complete Google sign-in in your browser when Antigravity.app is installed. The `agy` CLI alone cannot supply LLMits' browser OAuth callback; sign in with `agy` in Terminal to use its existing login instead. CLI connections read the full `/usage` quota report without copying or changing its credentials.
+- **Antigravity:** sign in by running `agy` in Terminal first. LLMits runs `agy`'s read-only `/usage` report and never reads, copies, or changes its credentials. Set `ANTIGRAVITY_CLI_PATH` if `agy` is not in `~/.local/bin`, `/opt/homebrew/bin`, or `/usr/local/bin`.
 
 Open **Settings → Connections** to disconnect a provider from LLMits. Disconnecting an `agy` connection does not sign out of the CLI. In **Settings → Menu Bar**, drag selected providers or use the arrow buttons to change their order.
 
 After connecting, the menu bar shows the configured used or remaining percentage. Pin up to three connected providers in the popover, and drag their rows in Settings to set their order. Antigravity uses the Gemini pool by default; choose Claude & GPT in Settings if preferred. Each pool prefers its five-hour window and falls back to weekly when available. Open the popover for every connected provider's available quota windows, reset times, plan details, and refresh status.
 
 > [!NOTE]
-> Running with `swift run` produces an ad-hoc-signed development executable. macOS may ask for Keychain access again after a rebuild because the executable identity changes. Choose **Always Allow** for the current build, or use a consistently signed app bundle for stable Keychain trust.
+> LLMits keeps Claude and ChatGPT credentials in a single Keychain item and reads it only when a connected provider refreshes, so launching with nothing connected never prompts. Running with `swift run` produces an ad-hoc-signed development executable, so macOS may ask for Keychain access again after a rebuild because the executable identity changes. Choose **Always Allow** for the current build, or use a consistently signed app bundle for stable Keychain trust.
 
 ## Install
 
@@ -113,7 +113,7 @@ Packaged apps check GitHub for a newer published release at launch, every six ho
 - `LLMitsCore` contains provider-neutral quota models, OAuth flows, endpoint adapters, persistence, formatting, and refresh policy.
 - Claude usage comes from the OAuth usage endpoint and is enriched with profile data for the plan label.
 - ChatGPT usage comes from the Codex usage endpoint associated with the authorized account.
-- Antigravity usage comes from Google's Cloud Code quota summary, with model-level fallback when the summary is unavailable. The unofficial remote response may omit weekly windows.
+- Antigravity usage comes from `agy`'s `/usage` report. The unofficial remote response may omit weekly windows.
 - Quota values are clamped and normalized before display, with a five-hour window preferred in the menu bar and weekly usage used as a fallback.
 
 See [Architecture](docs/ARCHITECTURE.md) and [Roadmap](docs/ROADMAP.md).
