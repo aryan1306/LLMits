@@ -127,34 +127,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func updateStatusTitle() {
         guard let button = statusItem?.button else { return }
-        button.attributedTitle = makeStatusTitle()
+        if model.statusItems.isEmpty {
+            button.image = nil
+            button.title = "LLMits"
+        } else {
+            button.title = ""
+            button.image = makeStatusImage(font: button.font ?? NSFont.menuBarFont(ofSize: 0))
+        }
         button.setAccessibilityLabel("LLMits, \(model.statusAccessibilityLabel)")
     }
 
-    private func makeStatusTitle() -> NSAttributedString {
-        guard !model.statusItems.isEmpty else {
-            return NSAttributedString(string: "LLMits")
-        }
-
+    private func makeStatusImage(font: NSFont) -> NSImage {
         let title = NSMutableAttributedString()
+        let textAttributes: [NSAttributedString.Key: Any] = [.font: font]
         for (index, item) in model.statusItems.enumerated() {
-            if index > 0 { title.append(NSAttributedString(string: "   ")) }
-            if let image = providerImage(item.provider) {
+            if index > 0 { title.append(NSAttributedString(string: "   ", attributes: textAttributes)) }
+            if let image = item.provider.iconImage {
                 let size: CGFloat = item.provider == .claude ? 17 : 14
                 let attachment = NSTextAttachment()
                 attachment.image = image
                 attachment.bounds = NSRect(x: 0, y: item.provider == .claude ? -3 : -2, width: size, height: size)
                 title.append(NSAttributedString(attachment: attachment))
             }
-            title.append(NSAttributedString(string: " \(item.percentage)%"))
+            title.append(NSAttributedString(string: " \(item.percentage)%", attributes: textAttributes))
         }
-        return title
-    }
-
-    private func providerImage(_ provider: ProviderID) -> NSImage? {
-        let image = provider.iconImage
-        // The Antigravity mark is monochrome, so let AppKit tint it for light and dark menu bars.
-        if provider == .antigravity { image?.isTemplate = true }
+        let textSize = title.size()
+        let imageSize = NSSize(width: ceil(textSize.width), height: max(20, ceil(textSize.height) + 6))
+        // Tint the entire status item together so AppKit handles each display's menu bar state.
+        let image = NSImage(size: imageSize, flipped: false) { bounds in
+            title.draw(at: NSPoint(x: 0, y: (bounds.height - textSize.height) / 2))
+            return true
+        }
+        image.isTemplate = true
         return image
     }
 
